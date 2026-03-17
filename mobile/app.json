@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "GPS Attendance",
+    "slug": "gps-attendance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.student.gpsattendance",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "CAMERA",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GPS Attendance needs your location to verify you are inside the classroom."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow GPS Attendance to use Face ID for quick login."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "GPS Attendance needs camera access to take a selfie for identity verification when marking attendance."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#4361ee",
+          "sounds": []
+        }
+      ]
+    ]
+  }
+}
