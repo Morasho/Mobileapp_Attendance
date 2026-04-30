@@ -10,7 +10,7 @@ app.get("/", (req, res) => {
   res.send("API running...");
 });
 
-const PORT = 5000; // Default port, can be overridden by .env
+const PORT = 5432; // Default port, can be overridden by .env
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
