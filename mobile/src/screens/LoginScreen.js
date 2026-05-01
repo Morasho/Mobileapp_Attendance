@@ -1,49 +1,39 @@
-import * as LocalAuthentication from "expo-local-authentication";
-import * as SecureStore from "expo-secure-store";
-import { useState } from "react";
+import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView, Platform,
-  StyleSheet,
-  Text, TextInput, TouchableOpacity,
-  View,
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  Alert, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from "react-native";
+import * as SecureStore from "expo-secure-store";
+import * as LocalAuthentication from "expo-local-authentication";
 import api from "../services/api";
-import { registerForPushNotifications, sendLocalNotification } from "../services/notifications";
 
 export default function LoginScreen({ navigation }) {
-  const [studentId, setStudentId] = useState("");
-  const [password, setPassword]   = useState("");
-  const [loading, setLoading]     = useState(false);
-
-  const afterLogin = async () => {
-    // Register for push notifications after login
-    const token = await registerForPushNotifications();
-    if (token) {
-      await SecureStore.setItemAsync("pushToken", token);
-    }
-    // Welcome notification
-    await sendLocalNotification(
-      "Welcome back! 👋",
-      "GPS Attendance is ready. Select your class to mark attendance."
-    );
-    navigation.replace("ClassPicker");
-  };
+  const [role, setRole]         = useState("student");
+  const [identifier, setIdentifier] = useState(""); // studentId or email
+  const [password, setPassword] = useState("");
+  const [loading, setLoading]   = useState(false);
 
   const handleLogin = async () => {
-    if (!studentId || !password) {
-      Alert.alert("Missing fields", "Please enter your Student ID and password");
-      return;
-    }
+    if (!identifier || !password)
+      return Alert.alert("Missing fields", "Please fill in all fields");
+
     setLoading(true);
     try {
-      const { data } = await api.post("/auth/login", { studentId, password });
+      const payload = { password, role };
+      if (role === "lecturer") payload.email    = identifier;
+      else                     payload.studentId = identifier;
+
+      const { data } = await api.post("/auth/login", payload);
       await SecureStore.setItemAsync("token", data.token);
-      await SecureStore.setItemAsync("student", JSON.stringify(data.student));
-      await afterLogin();
+      await SecureStore.setItemAsync("user",  JSON.stringify(data.user));
+
+      if (data.user.role === "lecturer") {
+        navigation.replace("LecturerDashboard");
+      } else {
+        navigation.replace("ClassPicker");
+      }
     } catch (err) {
-      Alert.alert("Login failed", err.response?.data?.error || "Check your credentials and try again");
+      Alert.alert("Login failed", err.response?.data?.error || "Check your credentials");
     } finally {
       setLoading(false);
     }
@@ -52,21 +42,20 @@ export default function LoginScreen({ navigation }) {
   const handleBiometric = async () => {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     const isEnrolled  = await LocalAuthentication.isEnrolledAsync();
-
     if (!hasHardware || !isEnrolled) {
-      Alert.alert("Not available", "Biometric auth is not set up on this device");
+      Alert.alert("Not available", "Biometric auth not set up on this device");
       return;
     }
-
     const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: "Authenticate to sign attendance",
-      fallbackLabel: "Use password instead",
+      promptMessage: "Authenticate to continue",
     });
-
     if (result.success) {
       const token = await SecureStore.getItemAsync("token");
-      if (token) {
-        await afterLogin();
+      const raw   = await SecureStore.getItemAsync("user");
+      if (token && raw) {
+        const user = JSON.parse(raw);
+        if (user.role === "lecturer") navigation.replace("LecturerDashboard");
+        else navigation.replace("ClassPicker");
       } else {
         Alert.alert("Please log in with your password first");
       }
@@ -78,18 +67,33 @@ export default function LoginScreen({ navigation }) {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={styles.header}>
-        <Text style={styles.title}>GPS Attendance</Text>
-        <Text style={styles.subtitle}>Sign in to mark your attendance</Text>
+      <Text style={styles.title}>GPS Attendance</Text>
+      <Text style={styles.subtitle}>Sign in to continue</Text>
+
+      {/* Role selector */}
+      <View style={styles.roleRow}>
+        <TouchableOpacity
+          style={[styles.roleBtn, role === "student" && styles.roleBtnActive]}
+          onPress={() => setRole("student")}
+        >
+          <Text style={[styles.roleBtnText, role === "student" && styles.roleBtnTextActive]}>🎓 Student</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.roleBtn, role === "lecturer" && styles.roleBtnActive]}
+          onPress={() => setRole("lecturer")}
+        >
+          <Text style={[styles.roleBtnText, role === "lecturer" && styles.roleBtnTextActive]}>👨‍🏫 Lecturer</Text>
+        </TouchableOpacity>
       </View>
 
       <TextInput
         style={styles.input}
-        placeholder="Student ID"
+        placeholder={role === "lecturer" ? "Email Address" : "Student ID"}
         placeholderTextColor="#adb5bd"
-        value={studentId}
-        onChangeText={setStudentId}
+        value={identifier}
+        onChangeText={setIdentifier}
         autoCapitalize="none"
+        keyboardType={role === "lecturer" ? "email-address" : "default"}
       />
       <TextInput
         style={styles.input}
@@ -101,10 +105,7 @@ export default function LoginScreen({ navigation }) {
       />
 
       <TouchableOpacity style={styles.btn} onPress={handleLogin} disabled={loading}>
-        {loading
-          ? <ActivityIndicator color="#fff" />
-          : <Text style={styles.btnText}>Log In</Text>
-        }
+        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Log In</Text>}
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.biometricBtn} onPress={handleBiometric}>
@@ -119,18 +120,18 @@ export default function LoginScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container:     { flex: 1, justifyContent: "center", padding: 28, backgroundColor: "#f8f9fa" },
-  header:        { marginBottom: 36 },
-  title:         { fontSize: 30, fontWeight: "700", color: "#1a1a2e" },
-  subtitle:      { fontSize: 15, color: "#6c757d", marginTop: 6 },
-  input: {
-    backgroundColor: "#fff", borderRadius: 10, padding: 14,
-    marginBottom: 14, borderWidth: 1, borderColor: "#dee2e6",
-    fontSize: 15, color: "#1a1a2e",
-  },
-  btn:           { backgroundColor: "#4361ee", borderRadius: 10, padding: 16, alignItems: "center", marginBottom: 12 },
-  btnText:       { color: "#fff", fontWeight: "700", fontSize: 16 },
-  biometricBtn:  { borderRadius: 10, padding: 15, alignItems: "center", borderWidth: 1, borderColor: "#4361ee", marginBottom: 28 },
-  biometricText: { color: "#4361ee", fontWeight: "600", fontSize: 15 },
-  link:          { color: "#4361ee", textAlign: "center", fontSize: 14 },
+  container:         { flex: 1, justifyContent: "center", padding: 28, backgroundColor: "#f8f9fa" },
+  title:             { fontSize: 30, fontWeight: "700", color: "#1a1a2e", marginBottom: 6 },
+  subtitle:          { fontSize: 15, color: "#6c757d", marginBottom: 28 },
+  roleRow:           { flexDirection: "row", gap: 12, marginBottom: 20 },
+  roleBtn:           { flex: 1, padding: 14, borderRadius: 10, borderWidth: 1.5, borderColor: "#dee2e6", alignItems: "center", backgroundColor: "#fff" },
+  roleBtnActive:     { borderColor: "#4361ee", backgroundColor: "#dbe4ff" },
+  roleBtnText:       { fontSize: 14, fontWeight: "600", color: "#6c757d" },
+  roleBtnTextActive: { color: "#3451b2" },
+  input:             { backgroundColor: "#fff", borderRadius: 10, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: "#dee2e6", fontSize: 15, color: "#1a1a2e" },
+  btn:               { backgroundColor: "#4361ee", borderRadius: 10, padding: 16, alignItems: "center", marginBottom: 12 },
+  btnText:           { color: "#fff", fontWeight: "700", fontSize: 16 },
+  biometricBtn:      { borderRadius: 10, padding: 15, alignItems: "center", borderWidth: 1, borderColor: "#4361ee", marginBottom: 28 },
+  biometricText:     { color: "#4361ee", fontWeight: "600", fontSize: 15 },
+  link:              { color: "#4361ee", textAlign: "center", fontSize: 14 },
 });
