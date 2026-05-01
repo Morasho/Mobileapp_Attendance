@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const pool   = require("../config/db");
 
+// Unchanged — keep exactly as-is
 const makeToken = (user, role) =>
   jwt.sign(
     { id: user.id, email: user.email, role },
@@ -16,43 +17,41 @@ const register = async (req, res) => {
   if (!name || !email || !password || !role)
     return res.status(400).json({ error: "name, email, password and role are required" });
 
+  if (!["student", "lecturer"].includes(role))
+    return res.status(400).json({ error: "role must be student or lecturer" });
+
   if (password.length < 6)
     return res.status(400).json({ error: "Password must be at least 6 characters" });
+
+  if (role === "student" && !studentId)
+    return res.status(400).json({ error: "studentId is required for students" });
 
   try {
     const hashed = await bcrypt.hash(password, 12);
 
-    if (role === "lecturer") {
-      const { rows } = await pool.query(
-        `INSERT INTO lecturers (name, email, password, phone, department, role)
-         VALUES ($1, $2, $3, $4, $5, 'lecturer')
-         RETURNING id, name, email, phone, department, role`,
-        [name, email, hashed, phone || null, department || null]
-      );
-      const lecturer = rows[0];
-      return res.status(201).json({
-        message: "Lecturer registered successfully",
-        token: makeToken(lecturer, "lecturer"),
-        user: lecturer,
-      });
-    }
-
-    // Student registration
-    if (!studentId)
-      return res.status(400).json({ error: "studentId is required for students" });
-
     const { rows } = await pool.query(
-      `INSERT INTO students (name, email, student_id, password, phone, role)
-       VALUES ($1, $2, $3, $4, $5, 'student')
-       RETURNING id, name, email, student_id, phone, role`,
-      [name, email, studentId, hashed, phone || null]
+      `INSERT INTO users
+         (name, email, student_id, password, role, phone, department)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, name, email, student_id, role, phone, department`,
+      [
+        name,
+        email,
+        role === "student" ? studentId : null,   // lecturers have no student_id
+        hashed,
+        role,
+        phone      || null,
+        department || null,                       // students will just have null here
+      ]
     );
-    const student = rows[0];
-    res.status(201).json({
-      message: "Student registered successfully",
-      token: makeToken(student, "student"),
-      user: { ...student, studentId: student.student_id },
+
+    const user = rows[0];
+    return res.status(201).json({
+      message: `${role.charAt(0).toUpperCase() + role.slice(1)} registered successfully`,
+      token: makeToken(user, role),
+      user: buildSafeUser(user),
     });
+
   } catch (err) {
     if (err.code === "23505")
       return res.status(409).json({ error: "Email or Student ID already exists" });
@@ -68,29 +67,33 @@ const login = async (req, res) => {
   if (!password || !role)
     return res.status(400).json({ error: "password and role are required" });
 
+  if (!["student", "lecturer"].includes(role))
+    return res.status(400).json({ error: "role must be student or lecturer" });
+
   try {
-    let user, userRole;
+    let user;
 
     if (role === "lecturer") {
       if (!email)
         return res.status(400).json({ error: "Email is required for lecturers" });
 
       const { rows } = await pool.query(
-        "SELECT * FROM lecturers WHERE email = $1", [email]
+        "SELECT * FROM users WHERE email = $1 AND role = 'lecturer'",
+        [email]
       );
       user = rows[0];
-      userRole = "lecturer";
+
     } else {
-      // Student can login with studentId or email
+      // Students can log in with studentId or email — same as before
       const identifier = studentId || email;
       if (!identifier)
         return res.status(400).json({ error: "Student ID or email is required" });
 
       const { rows } = await pool.query(
-        "SELECT * FROM students WHERE student_id = $1 OR email = $1", [identifier]
+        "SELECT * FROM users WHERE (student_id = $1 OR email = $1) AND role = 'student'",
+        [identifier]
       );
       user = rows[0];
-      userRole = "student";
     }
 
     if (!user)
@@ -100,26 +103,28 @@ const login = async (req, res) => {
     if (!match)
       return res.status(401).json({ error: "Invalid credentials" });
 
-    const safeUser = {
-      id:         user.id,
-      name:       user.name,
-      email:      user.email,
-      phone:      user.phone,
-      role:       userRole,
-      profilePhoto: user.profile_photo || null,
-      ...(userRole === "student"   && { studentId: user.student_id }),
-      ...(userRole === "lecturer"  && { department: user.department }),
-    };
-
     res.json({
       message: "Login successful",
-      token: makeToken(user, userRole),
-      user: safeUser,
+      token: makeToken(user, user.role),
+      user: buildSafeUser(user),
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Login failed" });
   }
 };
+
+// Centralised — avoids duplicating this in register AND login
+const buildSafeUser = (user) => ({
+  id:           user.id,
+  name:         user.name,
+  email:        user.email,
+  phone:        user.phone       || null,
+  role:         user.role,
+  profilePhoto: user.profile_photo || null,
+  ...(user.role === "student"  && { studentId:  user.student_id }),
+  ...(user.role === "lecturer" && { department: user.department }),
+});
 
 module.exports = { register, login };

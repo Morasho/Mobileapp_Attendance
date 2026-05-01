@@ -8,30 +8,37 @@ import * as LocalAuthentication from "expo-local-authentication";
 import api from "../services/api";
 
 export default function LoginScreen({ navigation }) {
-  const [role, setRole]         = useState("student");
-  const [identifier, setIdentifier] = useState(""); // studentId or email
-  const [password, setPassword] = useState("");
-  const [loading, setLoading]   = useState(false);
+  const [role, setRole]             = useState("student");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword]     = useState("");
+  const [loading, setLoading]       = useState(false);
+
+  // Fixed: clear identifier when switching roles
+  const switchRole = (newRole) => {
+    setRole(newRole);
+    setIdentifier("");
+  };
 
   const handleLogin = async () => {
     if (!identifier || !password)
       return Alert.alert("Missing fields", "Please fill in all fields");
 
+    // Fixed: validate email format for lecturers
+    if (role === "lecturer" && !identifier.includes("@"))
+      return Alert.alert("Invalid email", "Please enter a valid email address");
+
     setLoading(true);
     try {
       const payload = { password, role };
-      if (role === "lecturer") payload.email    = identifier;
+      if (role === "lecturer") payload.email     = identifier;
       else                     payload.studentId = identifier;
 
       const { data } = await api.post("/auth/login", payload);
       await SecureStore.setItemAsync("token", data.token);
       await SecureStore.setItemAsync("user",  JSON.stringify(data.user));
 
-      if (data.user.role === "lecturer") {
-        navigation.replace("LecturerDashboard");
-      } else {
-        navigation.replace("ClassPicker");
-      }
+      if (data.user.role === "lecturer") navigation.replace("LecturerDashboard");
+      else                               navigation.replace("ClassPicker");
     } catch (err) {
       Alert.alert("Login failed", err.response?.data?.error || "Check your credentials");
     } finally {
@@ -53,9 +60,18 @@ export default function LoginScreen({ navigation }) {
       const token = await SecureStore.getItemAsync("token");
       const raw   = await SecureStore.getItemAsync("user");
       if (token && raw) {
-        const user = JSON.parse(raw);
-        if (user.role === "lecturer") navigation.replace("LecturerDashboard");
-        else navigation.replace("ClassPicker");
+        // Fixed: verify token is still valid before navigating
+        try {
+          const { data } = await api.get("/profile", {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (data.user.role === "lecturer") navigation.replace("LecturerDashboard");
+          else                               navigation.replace("ClassPicker");
+        } catch {
+          await SecureStore.deleteItemAsync("token");
+          await SecureStore.deleteItemAsync("user");
+          Alert.alert("Session expired", "Please log in with your password");
+        }
       } else {
         Alert.alert("Please log in with your password first");
       }
@@ -70,19 +86,18 @@ export default function LoginScreen({ navigation }) {
       <Text style={styles.title}>GPS Attendance</Text>
       <Text style={styles.subtitle}>Sign in to continue</Text>
 
-      {/* Role selector */}
       <View style={styles.roleRow}>
         <TouchableOpacity
           style={[styles.roleBtn, role === "student" && styles.roleBtnActive]}
-          onPress={() => setRole("student")}
+          onPress={() => switchRole("student")}  // fixed
         >
-          <Text style={[styles.roleBtnText, role === "student" && styles.roleBtnTextActive]}>🎓 Student</Text>
+          <Text style={[styles.roleBtnText, role === "student" && styles.roleBtnTextActive]}>Student</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.roleBtn, role === "lecturer" && styles.roleBtnActive]}
-          onPress={() => setRole("lecturer")}
+          onPress={() => switchRole("lecturer")}  // fixed
         >
-          <Text style={[styles.roleBtnText, role === "lecturer" && styles.roleBtnTextActive]}>👨‍🏫 Lecturer</Text>
+          <Text style={[styles.roleBtnText, role === "lecturer" && styles.roleBtnTextActive]}>Lecturer</Text>
         </TouchableOpacity>
       </View>
 
@@ -105,11 +120,13 @@ export default function LoginScreen({ navigation }) {
       />
 
       <TouchableOpacity style={styles.btn} onPress={handleLogin} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Log In</Text>}
+        {loading
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={styles.btnText}>Log In</Text>}
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.biometricBtn} onPress={handleBiometric}>
-        <Text style={styles.biometricText}>🔒  Use Biometric Login</Text>
+        <Text style={styles.biometricText}>Use Biometric Login</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => navigation.navigate("Register")}>

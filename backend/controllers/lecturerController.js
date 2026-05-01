@@ -9,7 +9,6 @@ const dashboard = async (req, res) => {
       [lecturerId]
     );
 
-    // Today's attendance across all lecturer's classes
     const classIds = classes.map(c => c.id);
     let todayTotal = 0;
 
@@ -22,11 +21,7 @@ const dashboard = async (req, res) => {
       todayTotal = parseInt(rows[0].total);
     }
 
-    res.json({
-      totalClasses: classes.length,
-      todayAttendance: todayTotal,
-      classes,
-    });
+    res.json({ totalClasses: classes.length, todayAttendance: todayTotal, classes });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load dashboard" });
@@ -37,8 +32,13 @@ const dashboard = async (req, res) => {
 const myClasses = async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, course_code, lecturer, classroom_lat, classroom_lng, created_at
-       FROM classes WHERE lecturer_id = $1 ORDER BY name ASC`,
+      `SELECT c.id, c.name, c.course_code,
+              u.name AS lecturer,             -- fixed: join instead of stale string
+              c.classroom_lat, c.classroom_lng, c.created_at
+       FROM classes c
+       JOIN users u ON c.lecturer_id = u.id
+       WHERE c.lecturer_id = $1
+       ORDER BY c.name ASC`,
       [req.user.id]
     );
     res.json({ classes: rows });
@@ -57,11 +57,11 @@ const createClass = async (req, res) => {
     return res.status(400).json({ error: "name, courseCode, classroomLat and classroomLng are required" });
 
   try {
-    // Get lecturer name
-    const { rows: lRows } = await pool.query(
-      "SELECT name FROM lecturers WHERE id = $1", [lecturerId]
+    // fixed: query users not lecturers
+    const { rows: uRows } = await pool.query(
+      "SELECT name FROM users WHERE id = $1", [lecturerId]
     );
-    const lecturerName = lRows[0]?.name || null;
+    const lecturerName = uRows[0]?.name || null;
 
     const { rows } = await pool.query(
       `INSERT INTO classes (name, course_code, lecturer, classroom_lat, classroom_lng, lecturer_id)
@@ -81,7 +81,6 @@ const updateClass = async (req, res) => {
   const { name, courseCode, classroomLat, classroomLng } = req.body;
 
   try {
-    // Confirm this class belongs to this lecturer
     const { rows: check } = await pool.query(
       "SELECT id FROM classes WHERE id = $1 AND lecturer_id = $2",
       [id, req.user.id]
@@ -91,8 +90,8 @@ const updateClass = async (req, res) => {
 
     const { rows } = await pool.query(
       `UPDATE classes SET
-         name = COALESCE($1, name),
-         course_code = COALESCE($2, course_code),
+         name          = COALESCE($1, name),
+         course_code   = COALESCE($2, course_code),
          classroom_lat = COALESCE($3, classroom_lat),
          classroom_lng = COALESCE($4, classroom_lng)
        WHERE id = $5 RETURNING *`,
@@ -145,11 +144,11 @@ const classReport = async (req, res) => {
     );
 
     const { rows: present } = await pool.query(
-      `SELECT s.name, s.student_id, al.signed_at, al.distance_m, al.status
+      `SELECT u.name, u.student_id, al.signed_at, al.distance_m, al.status
        FROM attendance_logs al
-       JOIN students s ON al.student_id = s.id
+       JOIN users u ON al.student_id = u.id    -- fixed: was JOIN students
        WHERE al.class_id = $1 AND al.signed_date = $2
-       ORDER BY s.name ASC`,
+       ORDER BY u.name ASC`,
       [classId, date]
     );
 
@@ -163,7 +162,8 @@ const classReport = async (req, res) => {
         totalEnrolled,
         totalPresent,
         totalAbsent: Math.max(0, totalEnrolled - totalPresent),
-        attendanceRate: totalEnrolled > 0 ? Math.round((totalPresent / totalEnrolled) * 100) : 0,
+        attendanceRate: totalEnrolled > 0
+          ? Math.round((totalPresent / totalEnrolled) * 100) : 0,
       },
       records: present,
     });

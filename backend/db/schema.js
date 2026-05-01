@@ -3,13 +3,17 @@ const pool = require("../config/db");
 const createTables = async () => {
   try {
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS students (
-        id          SERIAL PRIMARY KEY,
-        name        VARCHAR(100)  NOT NULL,
-        email       VARCHAR(150)  UNIQUE NOT NULL,
-        student_id  VARCHAR(20)   UNIQUE NOT NULL,
-        password    TEXT          NOT NULL,
-        created_at  TIMESTAMPTZ   DEFAULT NOW()
+      CREATE TABLE IF NOT EXISTS users (
+        id            SERIAL PRIMARY KEY,
+        name          VARCHAR(100)     NOT NULL,
+        email         VARCHAR(150)     UNIQUE NOT NULL,
+        student_id    VARCHAR(20)      UNIQUE,        -- fixed: nullable, lecturers have none
+        password      TEXT             NOT NULL,
+        role          VARCHAR(20)      NOT NULL CHECK (role IN ('student', 'lecturer')),
+        phone         VARCHAR(20),
+        department    VARCHAR(100),
+        profile_photo TEXT,
+        created_at    TIMESTAMPTZ      DEFAULT NOW()
       )
     `);
 
@@ -19,18 +23,18 @@ const createTables = async () => {
         name           VARCHAR(100)     NOT NULL,
         course_code    VARCHAR(20)      NOT NULL,
         lecturer       VARCHAR(100),
+        lecturer_id    INTEGER          REFERENCES users(id) ON DELETE SET NULL,  -- fixed: was missing
         classroom_lat  DOUBLE PRECISION NOT NULL,
         classroom_lng  DOUBLE PRECISION NOT NULL,
         created_at     TIMESTAMPTZ      DEFAULT NOW()
       )
     `);
 
-    // signed_date is a plain DATE column — no casting needed, fully indexable
     await pool.query(`
       CREATE TABLE IF NOT EXISTS attendance_logs (
         id          SERIAL PRIMARY KEY,
-        student_id  INTEGER          NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-        class_id    INTEGER          NOT NULL REFERENCES classes(id)  ON DELETE CASCADE,
+        student_id  INTEGER          NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- fixed: was students(id)
+        class_id    INTEGER          NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
         signed_at   TIMESTAMPTZ      DEFAULT NOW(),
         signed_date DATE             DEFAULT CURRENT_DATE,
         latitude    DOUBLE PRECISION NOT NULL,
@@ -41,16 +45,11 @@ const createTables = async () => {
       )
     `);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS reports (
-        id            SERIAL PRIMARY KEY,
-        class_id      INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        date          DATE    NOT NULL,
-        total_present INTEGER DEFAULT 0,
-        generated_at  TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (class_id, date)
-      )
-    `);
+    // Indexes for query performance
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance_logs(student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_class   ON attendance_logs(class_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_date    ON attendance_logs(signed_date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_classes_lecturer   ON classes(lecturer_id)`);
 
     console.log("✅ All tables ready");
   } catch (err) {

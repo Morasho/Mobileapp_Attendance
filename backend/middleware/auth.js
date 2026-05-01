@@ -1,9 +1,8 @@
 const jwt = require("jsonwebtoken");
 
-// Protect any authenticated route
 const protect = (req, res, next) => {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer "))
+  if (!header?.startsWith("Bearer "))
     return res.status(401).json({ error: "No token — please log in" });
 
   const token = header.split(" ")[1];
@@ -16,18 +15,10 @@ const protect = (req, res, next) => {
   }
 };
 
-// Only allow lecturers
-const lecturerOnly = (req, res, next) => {
-  if (req.user?.role !== "lecturer")
-    return res.status(403).json({ error: "Access denied — lecturers only" });
+const requireRole = (...roles) => (req, res, next) => {
+  if (!roles.includes(req.user?.role))
+    return res.status(403).json({ error: `Access denied — ${roles.join(" or ")} only` });
   next();
 };
 
-// Only allow students
-const studentOnly = (req, res, next) => {
-  if (req.user?.role !== "student")
-    return res.status(403).json({ error: "Access denied — students only" });
-  next();
-};
-
-module.exports = { protect, lecturerOnly, studentOnly };
+module.exports = { protect, requireRole }; // lecturerOnly/studentOnly removed

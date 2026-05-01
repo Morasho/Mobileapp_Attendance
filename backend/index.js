@@ -1,4 +1,11 @@
 require("dotenv").config();
+
+// ── Guard — must be before anything else ──────────────────
+if (!process.env.JWT_SECRET) {
+  console.error("❌ JWT_SECRET is not set. Refusing to start.");
+  process.exit(1);
+}
+
 const express      = require("express");
 const cors         = require("cors");
 const createTables = require("./db/schema");
@@ -32,14 +39,12 @@ app.use((err, req, res, next) => {
 
 // ── Boot ───────────────────────────────────────────────────
 const start = async () => {
-  await createTables();   // creates all tables if they don't exist
+  await createTables();
   app.listen(PORT, () => {
     console.log(`🚀 Server running → http://localhost:${PORT}`);
-    console.log(`📋 Endpoints:`);
     console.log(`   POST /api/auth/register`);
     console.log(`   POST /api/auth/login`);
     console.log(`   GET  /api/classes`);
-    console.log(`   POST /api/classes`);
     console.log(`   POST /api/attendance/sign-in`);
     console.log(`   GET  /api/attendance/my-logs`);
     console.log(`   GET  /api/attendance/report/:classId`);
