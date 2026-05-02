@@ -88,6 +88,18 @@ export default function LecturerDashboardScreen({ navigation, setToken }) {
         <Text style={styles.arrow}>›</Text>
       </TouchableOpacity>
 
+      <TouchableOpacity
+        style={styles.actionCard}
+        onPress={() => navigation.navigate("SessionManager")}
+      >
+        <Text style={styles.actionIcon}>⏱️</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.actionTitle}>Manage Sessions</Text>
+          <Text style={styles.actionSub}>Start or end attendance sessions for your classes</Text>
+        </View>
+        <Text style={styles.arrow}>›</Text>
+      </TouchableOpacity>
+
       {/* Classes with Report buttons */}
       {/* Each class has its own Report button so ReportScreen always gets a classId */}
       {data?.classes?.length > 0 ? (

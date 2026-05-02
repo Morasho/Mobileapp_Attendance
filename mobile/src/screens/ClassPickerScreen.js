@@ -7,9 +7,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import * as SecureStore from "expo-secure-store";
 import api from "../services/api";
 
-export default function ClassPickerScreen({ navigation }) {
+export default function ClassPickerScreen({ navigation, setToken }) {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -31,10 +32,15 @@ export default function ClassPickerScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
       <Text style={styles.heading}>Select Your Class</Text>
-      <Text style={styles.sub}>Tap a class to mark attendance or view its report</Text>
+      <TouchableOpacity onPress={handleLogout}>
+        <Text style={styles.logout}>Log out</Text>
+      </TouchableOpacity>
+    </View>
+    <Text style={styles.sub}>Tap a class to mark attendance or view its report</Text>
 
-      <FlatList
+            <FlatList
         data={classes}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => (
@@ -87,11 +93,19 @@ export default function ClassPickerScreen({ navigation }) {
   );
 }
 
+const handleLogout = async (setToken) => {
+  await SecureStore.deleteItemAsync("token");
+  await SecureStore.deleteItemAsync("user");
+  setToken(null); //trigger App.js to show AuthStack automatically
+}
+
 const styles = StyleSheet.create({
   container:    { flex: 1, padding: 20, backgroundColor: "#f8f9fa" },
   center:       { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#f8f9fa" },
   loadingText:  { marginTop: 12, color: "#6c757d", fontSize: 14 },
   heading:      { fontSize: 24, fontWeight: "700", color: "#1a1a2e", marginBottom: 4 },
+  header:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+  logout:  { color: "#e63946", fontSize: 14, fontWeight: "600" },
   sub:          { fontSize: 14, color: "#6c757d", marginBottom: 24 },
   card:         { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: "#dee2e6" },
   cardTop:      { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },

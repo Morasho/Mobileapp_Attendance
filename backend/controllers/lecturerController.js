@@ -33,7 +33,7 @@ const myClasses = async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT c.id, c.name, c.course_code,
-              u.name AS lecturer,             -- fixed: join instead of stale string
+              u.name AS lecturer,
               c.classroom_lat, c.classroom_lng, c.created_at
        FROM classes c
        JOIN users u ON c.lecturer_id = u.id
@@ -146,7 +146,7 @@ const classReport = async (req, res) => {
     const { rows: present } = await pool.query(
       `SELECT u.name, u.student_id, al.signed_at, al.distance_m, al.status
        FROM attendance_logs al
-       JOIN users u ON al.student_id = u.id    -- fixed: was JOIN students
+       JOIN users u ON al.student_id = u.id
        WHERE al.class_id = $1 AND al.signed_date = $2
        ORDER BY u.name ASC`,
       [classId, date]

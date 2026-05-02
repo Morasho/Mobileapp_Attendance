@@ -7,7 +7,9 @@ const { signIn, myLogs, classReport, classReportCSV }         = require("../cont
 const { dashboard, myClasses, createClass, updateClass,
         deleteClass, classReport: lecturerReport }            = require("../controllers/lecturerController");
 const { getProfile, updateProfile }                           = require("../controllers/profileController");
-const { protect, requireRole }                                = require("../middleware/auth"); // updated
+const { openSession, closeSession,
+        getActiveSession, myOpenSessions }                    = require("../controllers/sessionController");
+const { protect, requireRole }                                = require("../middleware/auth");
 
 // ── Auth (public) ──────────────────────────────────────────
 router.post("/auth/register", register);
@@ -20,6 +22,12 @@ router.put("/profile",  protect, updateProfile);
 // ── Classes (both roles can view) ─────────────────────────
 router.get("/classes",  protect, listClasses);
 
+// ── Sessions ──────────────────────────────────────────────
+router.post("/sessions/open",          protect, requireRole("lecturer"), openSession);
+router.post("/sessions/close",         protect, requireRole("lecturer"), closeSession);
+router.get ("/sessions/my-open",       protect, requireRole("lecturer"), myOpenSessions);
+router.get ("/sessions/active/:classId", protect, getActiveSession);   // both roles
+
 // ── Lecturer routes ────────────────────────────────────────
 router.get   ("/lecturer/dashboard",       protect, requireRole("lecturer"), dashboard);
 router.get   ("/lecturer/classes",         protect, requireRole("lecturer"), myClasses);
@@ -28,11 +36,10 @@ router.put   ("/lecturer/classes/:id",     protect, requireRole("lecturer"), upd
 router.delete("/lecturer/classes/:id",     protect, requireRole("lecturer"), deleteClass);
 router.get   ("/lecturer/report/:classId", protect, requireRole("lecturer"), lecturerReport);
 
-// ── Student attendance routes ──────────────────────────────
-router.post("/attendance/sign-in",              protect, requireRole("student"),           signIn);
-router.get ("/attendance/my-logs",              protect, requireRole("student"),           myLogs);
-router.get ("/attendance/report/:classId",      protect, requireRole("student","lecturer"), classReport);
-router.get ("/attendance/report/:classId/csv",  protect, requireRole("lecturer"),          classReportCSV);
-router.get ("/attendance/report/:classId/csv",  protect, requireRole("lecturer"),          classReportCSV);
+// ── Student attendance ─────────────────────────────────────
+router.post("/attendance/sign-in",             protect, requireRole("student"),            signIn);
+router.get ("/attendance/my-logs",             protect, requireRole("student"),            myLogs);
+router.get ("/attendance/report/:classId",     protect, requireRole("student","lecturer"), classReport);
+router.get ("/attendance/report/:classId/csv", protect, requireRole("lecturer"),           classReportCSV);
 
-module.exports = router; 
+module.exports = router;

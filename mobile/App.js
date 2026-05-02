@@ -11,6 +11,7 @@ import AnalyticsScreen         from "./src/screens/AnalyticsScreen";
 import ReportScreen            from "./src/screens/ReportScreen";
 import LecturerDashboardScreen from "./src/screens/LecturerDashboardScreen";
 import ProfileScreen           from "./src/screens/ProfileScreen";
+import SessionManagerScreen       from "./src/screens/SessionManagerScreen";
 import ManageClassesScreen     from "./src/screens/ManageClassesScreen"; // match your filename exactly
 
 const Stack = createNativeStackNavigator();
@@ -44,8 +45,9 @@ function AppStack({ setToken, userRole }) {
       <Stack.Screen name="LecturerDashboard" options={{ title: "Dashboard", headerShown: false }}>
         {(props) => <LecturerDashboardScreen {...props} setToken={setToken} />}
       </Stack.Screen>
-      <Stack.Screen name="ClassPicker" component={ClassPickerScreen}
-        options={{ title: "Select Class", headerBackVisible: false }} />
+      <Stack.Screen name="ClassPicker" options={{ title: "Select Class", headerBackVisible: false }}>
+        {(props) => <ClassPickerScreen {...props} setToken={setToken} />}
+      </Stack.Screen>
       <Stack.Screen name="Home" options={{ title: "Mark Attendance", headerBackVisible: false }}>
         {(props) => <HomeScreen {...props} setToken={setToken} />}
       </Stack.Screen>
@@ -58,6 +60,8 @@ function AppStack({ setToken, userRole }) {
       <Stack.Screen name="Profile" options={{ title: "My Profile" }}>
         {(props) => <ProfileScreen {...props} setToken={setToken} />}
       </Stack.Screen>
+      <Stack.Screen name="SessionManager" component={SessionManagerScreen}
+        options={{ title: "Manage Sessions " }} />     
     </Stack.Navigator>
   );
 }
