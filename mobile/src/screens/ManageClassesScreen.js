@@ -9,12 +9,12 @@ import api from "../services/api";
 const EMPTY_FORM = { name: "", courseCode: "", classroomLat: "", classroomLng: "" };
 
 export default function ManageClassesScreen() {
-  const [classes, setClasses]   = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [modal, setModal]       = useState(false);
-  const [editId, setEditId]     = useState(null);
-  const [form, setForm]         = useState(EMPTY_FORM);
-  const [saving, setSaving]     = useState(false);
+  const [classes, setClasses]       = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [modal, setModal]           = useState(false);
+  const [editId, setEditId]         = useState(null);
+  const [form, setForm]             = useState(EMPTY_FORM);
+  const [saving, setSaving]         = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
 
   useEffect(() => { fetchClasses(); }, []);
@@ -70,17 +70,19 @@ export default function ManageClassesScreen() {
 
   const handleSave = async () => {
     const { name, courseCode, classroomLat, classroomLng } = form;
+
     if (!name || !courseCode || !classroomLat || !classroomLng)
       return Alert.alert("Missing fields", "Please fill in all fields including GPS coordinates");
 
+    // Fixed: validate coordinates are real numbers within valid ranges
+    const lat = parseFloat(classroomLat);
+    const lng = parseFloat(classroomLng);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)
+      return Alert.alert("Invalid coordinates", "Please enter valid GPS coordinates (lat: -90 to 90, lng: -180 to 180)");
+
     setSaving(true);
     try {
-      const payload = {
-        name,
-        courseCode,
-        classroomLat: parseFloat(classroomLat),
-        classroomLng: parseFloat(classroomLng),
-      };
+      const payload = { name, courseCode, classroomLat: lat, classroomLng: lng };
 
       if (editId) {
         await api.put(`/lecturer/classes/${editId}`, payload);
@@ -162,14 +164,23 @@ export default function ManageClassesScreen() {
         <ScrollView contentContainerStyle={styles.modal}>
           <Text style={styles.modalTitle}>{editId ? "Edit Class" : "New Class"}</Text>
 
-          <TextInput style={styles.input} placeholder="Class Name" placeholderTextColor="#adb5bd"
-            value={form.name} onChangeText={(v) => setForm(f => ({ ...f, name: v }))} />
-          <TextInput style={styles.input} placeholder="Course Code (e.g. CS301)" placeholderTextColor="#adb5bd"
-            value={form.courseCode} onChangeText={(v) => setForm(f => ({ ...f, courseCode: v }))} />
+          <TextInput
+            style={styles.input}
+            placeholder="Class Name"
+            placeholderTextColor="#adb5bd"
+            value={form.name}
+            onChangeText={(v) => setForm(f => ({ ...f, name: v }))}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Course Code (e.g. CS301)"
+            placeholderTextColor="#adb5bd"
+            value={form.courseCode}
+            onChangeText={(v) => setForm(f => ({ ...f, courseCode: v }))}
+          />
 
           <Text style={styles.venueLabel}>📍 Classroom GPS Venue</Text>
 
-          {/* GPS options */}
           <TouchableOpacity style={styles.gpsBtn} onPress={useCurrentGPS} disabled={gpsLoading}>
             {gpsLoading
               ? <ActivityIndicator color="#fff" />
@@ -179,14 +190,25 @@ export default function ManageClassesScreen() {
 
           <Text style={styles.orText}>— or enter manually —</Text>
 
-          <TextInput style={styles.input} placeholder="Latitude (e.g. -1.286389)"
-            placeholderTextColor="#adb5bd" value={form.classroomLat} keyboardType="numeric"
-            onChangeText={(v) => setForm(f => ({ ...f, classroomLat: v }))} />
-          <TextInput style={styles.input} placeholder="Longitude (e.g. 36.817223)"
-            placeholderTextColor="#adb5bd" value={form.classroomLng} keyboardType="numeric"
-            onChangeText={(v) => setForm(f => ({ ...f, classroomLng: v }))} />
+          <TextInput
+            style={styles.input}
+            placeholder="Latitude (e.g. -1.286389)"
+            placeholderTextColor="#adb5bd"
+            value={form.classroomLat}
+            keyboardType="numeric"
+            onChangeText={(v) => setForm(f => ({ ...f, classroomLat: v }))}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Longitude (e.g. 36.817223)"
+            placeholderTextColor="#adb5bd"
+            value={form.classroomLng}
+            keyboardType="numeric"
+            onChangeText={(v) => setForm(f => ({ ...f, classroomLng: v }))}
+          />
 
-          {form.classroomLat && form.classroomLng && (
+          {/* Coordinate preview — only shown when both fields have valid numbers */}
+          {!isNaN(parseFloat(form.classroomLat)) && !isNaN(parseFloat(form.classroomLng)) && (
             <View style={styles.coordPreview}>
               <Text style={styles.coordPreviewText}>
                 ✓ Venue set: {parseFloat(form.classroomLat).toFixed(5)}, {parseFloat(form.classroomLng).toFixed(5)}

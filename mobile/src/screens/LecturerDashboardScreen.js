@@ -6,36 +6,31 @@ import {
 import * as SecureStore from "expo-secure-store";
 import api from "../services/api";
 
-export default function LecturerDashboardScreen({ navigation }) {
-  const [data, setData]     = useState(null);
-  const [user, setUser]     = useState(null);
+export default function LecturerDashboardScreen({ navigation, setToken }) {
+  const [data, setData]       = useState(null);
+  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadUser();
-    fetchDashboard();
+    const load = async () => {
+      try {
+        const raw = await SecureStore.getItemAsync("user");
+        if (raw) setUser(JSON.parse(raw));
+        const { data: res } = await api.get("/lecturer/dashboard");
+        setData(res);
+      } catch {
+        Alert.alert("Error", "Could not load dashboard");
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, []);
-
-  const loadUser = async () => {
-    const raw = await SecureStore.getItemAsync("user");
-    if (raw) setUser(JSON.parse(raw));
-  };
-
-  const fetchDashboard = async () => {
-    try {
-      const { data: res } = await api.get("/lecturer/dashboard");
-      setData(res);
-    } catch {
-      Alert.alert("Error", "Could not load dashboard");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleLogout = async () => {
     await SecureStore.deleteItemAsync("token");
     await SecureStore.deleteItemAsync("user");
-    navigation.replace("Login");
+    setToken(null); // tells App.js to switch back to AuthStack
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#4361ee" />;
@@ -66,10 +61,13 @@ export default function LecturerDashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Actions */}
+      {/* Quick Actions */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
 
-      <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate("ManageClasses")}>
+      <TouchableOpacity
+        style={styles.actionCard}
+        onPress={() => navigation.navigate("ManageClasses")}
+      >
         <Text style={styles.actionIcon}>📚</Text>
         <View style={{ flex: 1 }}>
           <Text style={styles.actionTitle}>Manage Classes</Text>
@@ -78,16 +76,10 @@ export default function LecturerDashboardScreen({ navigation }) {
         <Text style={styles.arrow}>›</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate("LecturerReport")}>
-        <Text style={styles.actionIcon}>📊</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.actionTitle}>Attendance Reports</Text>
-          <Text style={styles.actionSub}>View and generate attendance logs by date</Text>
-        </View>
-        <Text style={styles.arrow}>›</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate("Profile")}>
+      <TouchableOpacity
+        style={styles.actionCard}
+        onPress={() => navigation.navigate("Profile")}
+      >
         <Text style={styles.actionIcon}>👤</Text>
         <View style={{ flex: 1 }}>
           <Text style={styles.actionTitle}>My Profile</Text>
@@ -96,19 +88,39 @@ export default function LecturerDashboardScreen({ navigation }) {
         <Text style={styles.arrow}>›</Text>
       </TouchableOpacity>
 
-      {/* Recent classes */}
-      {data?.classes?.length > 0 && (
+      {/* Classes with Report buttons */}
+      {/* Each class has its own Report button so ReportScreen always gets a classId */}
+      {data?.classes?.length > 0 ? (
         <>
           <Text style={styles.sectionTitle}>My Classes</Text>
           {data.classes.map((cls) => (
             <View key={cls.id} style={styles.classRow}>
+
+              {/* Class info */}
               <View style={styles.classBadge}>
                 <Text style={styles.classBadgeText}>{cls.course_code}</Text>
               </View>
               <Text style={styles.className}>{cls.name}</Text>
+
+              {/* Report button — passes classId so ReportScreen knows what to load */}
+              <TouchableOpacity
+                style={styles.reportBtn}
+                onPress={() => navigation.navigate("Report", {
+                  classId:   cls.id,
+                  className: cls.name,
+                })}
+              >
+                <Text style={styles.reportBtnText}>📊 Report</Text>
+              </TouchableOpacity>
+
             </View>
           ))}
         </>
+      ) : (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>No classes yet.</Text>
+          <Text style={styles.emptyHint}>Tap "Manage Classes" to create your first class.</Text>
+        </View>
       )}
 
     </ScrollView>
@@ -131,8 +143,13 @@ const styles = StyleSheet.create({
   actionTitle:    { fontSize: 15, fontWeight: "600", color: "#1a1a2e" },
   actionSub:      { fontSize: 12, color: "#6c757d", marginTop: 3 },
   arrow:          { fontSize: 22, color: "#adb5bd" },
-  classRow:       { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#fff", borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#dee2e6" },
+  classRow:       { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff", borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#dee2e6" },
   classBadge:     { backgroundColor: "#dbe4ff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   classBadgeText: { color: "#3451b2", fontWeight: "700", fontSize: 12 },
-  className:      { fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
+  className:      { fontSize: 14, fontWeight: "600", color: "#1a1a2e", flex: 1 },
+  reportBtn:      { backgroundColor: "#dbe4ff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  reportBtnText:  { color: "#3451b2", fontSize: 12, fontWeight: "700" },
+  empty:          { alignItems: "center", marginTop: 40 },
+  emptyText:      { fontSize: 16, color: "#adb5bd", fontWeight: "600" },
+  emptyHint:      { fontSize: 13, color: "#adb5bd", marginTop: 6, textAlign: "center" },
 });

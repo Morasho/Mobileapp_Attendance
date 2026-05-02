@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList, StyleSheet,
-    Text,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import api from "../services/api";
 
 export default function AnalyticsScreen({ navigation }) {
-  const [logs, setLogs]     = useState([]);
+  const [logs, setLogs]       = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get("/attendance/my-logs")
       .then(({ data }) => setLogs(data.logs))
-      .catch(() => {})
+      // Fixed: was .catch(() => {}) — errors were silently swallowed, user saw empty screen with no explanation
+      .catch(() => Alert.alert("Error", "Could not load attendance. Please try again."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -37,7 +40,7 @@ export default function AnalyticsScreen({ navigation }) {
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: "#dbe4ff" }]}>
           <Text style={styles.statNum}>{total}</Text>
-          <Text style={styles.statLabel}>Classes</Text>
+          <Text style={styles.statLabel}>Sign-ins</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: "#d8f3dc" }]}>
           <Text style={styles.statNum}>{present}</Text>
@@ -98,12 +101,12 @@ const styles = StyleSheet.create({
     marginBottom: 10, flexDirection: "row", alignItems: "center",
     borderWidth: 1, borderColor: "#dee2e6",
   },
-  logClass:   { fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
-  logCode:    { fontSize: 12, color: "#6c757d", marginTop: 2 },
-  logDist:    { fontSize: 11, color: "#adb5bd", marginTop: 3 },
-  logDate:    { fontSize: 12, color: "#495057" },
-  logTime:    { fontSize: 11, color: "#adb5bd", marginTop: 1 },
-  badge:      { marginTop: 6, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  logClass:     { fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
+  logCode:      { fontSize: 12, color: "#6c757d", marginTop: 2 },
+  logDist:      { fontSize: 11, color: "#adb5bd", marginTop: 3 },
+  logDate:      { fontSize: 12, color: "#495057" },
+  logTime:      { fontSize: 11, color: "#adb5bd", marginTop: 1 },
+  badge:        { marginTop: 6, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   presentBadge: { backgroundColor: "#d8f3dc" },
   absentBadge:  { backgroundColor: "#ffe0e0" },
   badgeText:    { fontSize: 11, fontWeight: "700", color: "#1a1a2e" },

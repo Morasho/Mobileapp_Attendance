@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import api from "../services/api";
 
-export default function HomeScreen({ route, navigation }) {
+export default function HomeScreen({ route, navigation, setToken }) {
   const { classId, className } = route.params ?? {};
 
   const [student, setStudent]         = useState(null);
@@ -29,7 +29,8 @@ export default function HomeScreen({ route, navigation }) {
   useEffect(() => { loadStudent(); requestLocation(); }, []);
 
   const loadStudent = async () => {
-    const raw = await SecureStore.getItemAsync("student");
+    // Fixed: key was "student", must match what LoginScreen saves as "user"
+    const raw = await SecureStore.getItemAsync("user");
     if (raw) setStudent(JSON.parse(raw));
   };
 
@@ -80,7 +81,7 @@ export default function HomeScreen({ route, navigation }) {
   const handleSignIn = async () => {
     if (!classId) { Alert.alert("No class", "Go back and select a class first."); return; }
     if (!location) { Alert.alert("No GPS", locError || "Still acquiring GPS..."); return; }
-    if (!selfie)   { Alert.alert("Selfie required", "Please take a selfie for identity verification before signing in."); return; }
+    if (!selfie)   { Alert.alert("Selfie required", "Please take a selfie before signing in."); return; }
 
     setLoading(true);
     setStatus(null);
@@ -93,7 +94,8 @@ export default function HomeScreen({ route, navigation }) {
       });
       setStatus({
         type: "success",
-        message: `Attendance recorded ✅\nYou were ${data.distanceM}m from the classroom.\nIdentity verified via selfie.`,
+        // Fixed: removed false "Identity verified via selfie" claim — selfie is not sent to backend
+        message: `Attendance recorded ✅\nYou were ${data.distanceM}m from the classroom.`,
       });
       setSelfie(null);
     } catch (err) {
@@ -108,8 +110,8 @@ export default function HomeScreen({ route, navigation }) {
 
   const handleLogout = async () => {
     await SecureStore.deleteItemAsync("token");
-    await SecureStore.deleteItemAsync("student");
-    navigation.replace("Login");
+    await SecureStore.deleteItemAsync("user"); // Fixed: was "student"
+    setToken(null); //trigger App.js to show AuthStack automatically
   };
 
   // ── Camera view ──────────────────────────────────────────
@@ -199,7 +201,7 @@ export default function HomeScreen({ route, navigation }) {
           </View>
         ) : (
           <>
-            <Text style={styles.selfieHint}>A selfie is required to verify your identity before signing in.</Text>
+            <Text style={styles.selfieHint}>A selfie is required before signing in.</Text>
             <TouchableOpacity style={styles.cameraBtn} onPress={openCamera}>
               <Text style={styles.cameraBtnText}>📷  Take Selfie</Text>
             </TouchableOpacity>

@@ -7,7 +7,7 @@ import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 import api from "../services/api";
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, setToken }) {
   const [role, setRole]             = useState("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword]     = useState("");
@@ -34,11 +34,8 @@ export default function LoginScreen({ navigation }) {
       else                     payload.studentId = identifier;
 
       const { data } = await api.post("/auth/login", payload);
-      await SecureStore.setItemAsync("token", data.token);
-      await SecureStore.setItemAsync("user",  JSON.stringify(data.user));
-
-      if (data.user.role === "lecturer") navigation.replace("LecturerDashboard");
-      else                               navigation.replace("ClassPicker");
+      await setToken(data.token, data.user);  // pass user info to App for role-based routing
+      // Navigation is now handled by AppStack based on user role, so no need to navigate here
     } catch (err) {
       Alert.alert("Login failed", err.response?.data?.error || "Check your credentials");
     } finally {
@@ -65,8 +62,7 @@ export default function LoginScreen({ navigation }) {
           const { data } = await api.get("/profile", {
             headers: { Authorization: `Bearer ${token}` }
           });
-          if (data.user.role === "lecturer") navigation.replace("LecturerDashboard");
-          else                               navigation.replace("ClassPicker");
+          await setToken(data.token, data.user); // refresh user info in App
         } catch {
           await SecureStore.deleteItemAsync("token");
           await SecureStore.deleteItemAsync("user");

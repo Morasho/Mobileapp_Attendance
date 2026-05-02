@@ -7,7 +7,7 @@ import * as SecureStore from "expo-secure-store";
 import * as ImagePicker from "expo-image-picker";
 import api from "../services/api";
 
-export default function ProfileScreen({ navigation }) {
+export default function ProfileScreen({ navigation, setToken }) {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -84,7 +84,7 @@ export default function ProfileScreen({ navigation }) {
   const handleLogout = async () => {
     await SecureStore.deleteItemAsync("token");
     await SecureStore.deleteItemAsync("user");
-    navigation.replace("Login");
+    setToken(null); //trigger App.js to show AuthStack automatically
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#4361ee" />;

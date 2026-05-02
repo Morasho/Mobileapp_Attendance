@@ -6,7 +6,7 @@ import {
 import * as SecureStore from "expo-secure-store";
 import api from "../services/api";
 
-export default function RegisterScreen({ navigation }) {
+export default function RegisterScreen({ navigation, setToken }) {
   const [role, setRole]     = useState("student");
   const [form, setForm]     = useState({
     name: "", email: "", studentId: "", password: "", confirm: "", phone: "", department: "",
@@ -34,15 +34,7 @@ export default function RegisterScreen({ navigation }) {
       if (role === "lecturer") payload.department = department;
 
       const { data } = await api.post("/auth/register", payload);
-      await SecureStore.setItemAsync("token", data.token);
-      await SecureStore.setItemAsync("user", JSON.stringify(data.user));
-
-      // Route based on role
-      if (data.user.role === "lecturer") {
-        navigation.replace("LecturerDashboard");
-      } else {
-        navigation.replace("ClassPicker");
-      }
+      await setToken(data.token, data.user);  // pass user info to App for role-based routing
     } catch (err) {
       Alert.alert("Registration failed", err.response?.data?.error || "Please try again");
     } finally {
