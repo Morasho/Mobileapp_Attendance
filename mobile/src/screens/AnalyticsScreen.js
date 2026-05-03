@@ -1,25 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  StyleSheet,
-  Text,
-  View,
+  ActivityIndicator, Alert,
+  FlatList, StyleSheet, Text, View, RefreshControl,
 } from "react-native";
 import api from "../services/api";
 
-export default function AnalyticsScreen({ navigation }) {
-  const [logs, setLogs]       = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function AnalyticsScreen() {
+  const [logs, setLogs]         = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    api.get("/attendance/my-logs")
-      .then(({ data }) => setLogs(data.logs))
-      // Fixed: was .catch(() => {}) — errors were silently swallowed, user saw empty screen with no explanation
-      .catch(() => Alert.alert("Error", "Could not load attendance. Please try again."))
-      .finally(() => setLoading(false));
+  const fetchLogs = useCallback(async () => {
+    try {
+      const { data } = await api.get("/attendance/my-logs");
+      setLogs(data.logs);
+    } catch {
+      Alert.alert("Error", "Could not load attendance. Please try again.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => { fetchLogs(); }, []);
+
+  const onRefresh = () => { setRefreshing(true); fetchLogs(); };
 
   const total   = logs.length;
   const present = logs.filter((l) => l.status === "present").length;
@@ -35,8 +40,6 @@ export default function AnalyticsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-
-      {/* Summary cards */}
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: "#dbe4ff" }]}>
           <Text style={styles.statNum}>{total}</Text>
@@ -57,6 +60,9 @@ export default function AnalyticsScreen({ navigation }) {
       <FlatList
         data={logs}
         keyExtractor={(item) => item.id.toString()}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4361ee" />
+        }
         renderItem={({ item }) => (
           <View style={styles.logItem}>
             <View style={{ flex: 1 }}>
@@ -96,11 +102,7 @@ const styles = StyleSheet.create({
   statNum:      { fontSize: 26, fontWeight: "700", color: "#1a1a2e" },
   statLabel:    { fontSize: 12, color: "#6c757d", marginTop: 3 },
   sectionTitle: { fontSize: 16, fontWeight: "700", color: "#1a1a2e", marginBottom: 12 },
-  logItem: {
-    backgroundColor: "#fff", borderRadius: 12, padding: 14,
-    marginBottom: 10, flexDirection: "row", alignItems: "center",
-    borderWidth: 1, borderColor: "#dee2e6",
-  },
+  logItem:      { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#dee2e6" },
   logClass:     { fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
   logCode:      { fontSize: 12, color: "#6c757d", marginTop: 2 },
   logDist:      { fontSize: 11, color: "#adb5bd", marginTop: 3 },

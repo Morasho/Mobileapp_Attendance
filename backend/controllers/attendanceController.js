@@ -10,49 +10,63 @@ const signIn = async (req, res) => {
     return res.status(400).json({ error: "classId, latitude and longitude are required" });
 
   try {
+    // 1. Get class + unit info
     const { rows: classRows } = await pool.query(
-      "SELECT * FROM classes WHERE id = $1", [classId]
+      `SELECT c.*, u.name AS unit_name, u.course_id, u.year_of_study
+       FROM classes c
+       JOIN units u ON c.unit_id = u.id
+       WHERE c.id = $1`,
+      [classId]
     );
     if (!classRows.length)
       return res.status(404).json({ error: "Class not found" });
 
+    // 2. Verify student is in the right course + year
     const cls = classRows[0];
+    const { rows: studentRows } = await pool.query(
+      "SELECT course_id, year_of_study FROM users WHERE id = $1",
+      [studentId]
+    );
+    const student = studentRows[0];
+    if (student.course_id !== cls.course_id || student.year_of_study !== cls.year_of_study) {
+      return res.status(403).json({ error: "This class is not part of your course or year" });
+    }
 
-    // ── Session check — attendance only allowed during open session ──
+    // 3. Check active session
     const { rows: sessionRows } = await pool.query(
-      "SELECT id FROM sessions WHERE class_id = $1 AND is_active = TRUE",
+      `SELECT id, opened_lat, opened_lng
+       FROM sessions WHERE class_id = $1 AND is_active = TRUE`,
       [classId]
     );
-    if (!sessionRows.length) {
+    if (!sessionRows.length)
       return res.status(403).json({
-        error: "Attendance is not open for this class. Wait for your lecturer to open the session.",
-        sessionOpen: false,
+        error: "No active session. Your lecturer hasn't opened attendance yet.",
+        sessionActive: false,
       });
-    }
-    const sessionId = sessionRows[0].id;
 
-    // ── Geofence check ──
+    const session = sessionRows[0];
+
+    // 4. Geofence check using SESSION GPS (lecturer's live location at open time)
     const { allowed, distanceM } = isWithinGeofence(
-      latitude, longitude, cls.classroom_lat, cls.classroom_lng
+      latitude, longitude,
+      session.opened_lat, session.opened_lng  // session GPS, not classroom GPS
     );
-
     if (!allowed) {
       return res.status(403).json({
-        error: `You are ${distanceM}m away. Must be within ${process.env.GEOFENCE_RADIUS_METERS || 100}m of the classroom.`,
+        error: `You are ${distanceM}m away from the classroom. Must be within ${process.env.GEOFENCE_RADIUS_METERS || 100}m.`,
         distanceM,
         allowed: false,
-        sessionOpen: true,
       });
     }
 
-    // ── Record attendance ──
+    // 5. Record attendance
     const { rows, rowCount } = await pool.query(
       `INSERT INTO attendance_logs
          (student_id, class_id, session_id, latitude, longitude, distance_m, signed_date)
        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE)
        ON CONFLICT (student_id, class_id, signed_date) DO NOTHING
        RETURNING *`,
-      [studentId, classId, sessionId, latitude, longitude, distanceM]
+      [studentId, classId, session.id, latitude, longitude, distanceM]
     );
 
     if (rowCount === 0)
@@ -74,9 +88,10 @@ const myLogs = async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT al.id, al.signed_at, al.signed_date, al.distance_m, al.status,
-              c.name AS class_name, c.course_code
+              u.name AS class_name, u.code AS course_code
        FROM attendance_logs al
        JOIN classes c ON al.class_id = c.id
+       JOIN units u   ON c.unit_id   = u.id
        WHERE al.student_id = $1
        ORDER BY al.signed_at DESC`,
       [req.user.id]
@@ -95,7 +110,12 @@ const classReport = async (req, res) => {
 
   try {
     const { rows: classRows } = await pool.query(
-      "SELECT name, course_code, lecturer, lecturer_id FROM classes WHERE id = $1",
+      `SELECT c.*, u.name AS unit_name, u.code AS unit_code, c.lecturer_id,
+              usr.name AS lecturer_name
+       FROM classes c
+       JOIN units u  ON c.unit_id     = u.id
+       JOIN users usr ON c.lecturer_id = usr.id
+       WHERE c.id = $1`,
       [classId]
     );
     if (!classRows.length)
@@ -103,13 +123,11 @@ const classReport = async (req, res) => {
 
     const cls = classRows[0];
 
-    // Ownership check for lecturers
     if (req.user.role === "lecturer" && cls.lecturer_id !== req.user.id)
       return res.status(403).json({ error: "Not your class" });
 
     const { rows: enrolledRows } = await pool.query(
-      `SELECT COUNT(DISTINCT student_id) AS total
-       FROM attendance_logs WHERE class_id = $1`,
+      "SELECT COUNT(DISTINCT student_id) AS total FROM attendance_logs WHERE class_id = $1",
       [classId]
     );
 
@@ -124,19 +142,21 @@ const classReport = async (req, res) => {
 
     const totalEnrolled  = parseInt(enrolledRows[0].total);
     const totalPresent   = presentRows.length;
-    const totalAbsent    = Math.max(0, totalEnrolled - totalPresent);
-    const attendanceRate = totalEnrolled > 0
-      ? Math.round((totalPresent / totalEnrolled) * 100) : 0;
 
     res.json({
       class: {
         id: classId,
-        name: cls.name,
-        courseCode: cls.course_code,
-        lecturer: cls.lecturer,
+        name: cls.unit_name,
+        courseCode: cls.unit_code,
+        lecturer: cls.lecturer_name,
       },
       date,
-      summary: { totalEnrolled, totalPresent, totalAbsent, attendanceRate },
+      summary: {
+        totalEnrolled, totalPresent,
+        totalAbsent: Math.max(0, totalEnrolled - totalPresent),
+        attendanceRate: totalEnrolled > 0
+          ? Math.round((totalPresent / totalEnrolled) * 100) : 0,
+      },
       records: presentRows,
     });
   } catch (err) {
@@ -145,14 +165,17 @@ const classReport = async (req, res) => {
   }
 };
 
-// GET /api/attendance/report/:classId/csv?date=YYYY-MM-DD
+// GET /api/attendance/report/:classId/csv
 const classReportCSV = async (req, res) => {
   const { classId } = req.params;
   const date = req.query.date || new Date().toISOString().split("T")[0];
 
   try {
     const { rows: classRows } = await pool.query(
-      "SELECT name, course_code, lecturer_id FROM classes WHERE id = $1", [classId]
+      `SELECT c.lecturer_id, u.code AS unit_code
+       FROM classes c JOIN units u ON c.unit_id = u.id
+       WHERE c.id = $1`,
+      [classId]
     );
     if (!classRows.length)
       return res.status(404).json({ error: "Class not found" });
@@ -176,7 +199,7 @@ const classReportCSV = async (req, res) => {
 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition",
-      `attachment; filename="attendance_${classRows[0].course_code}_${date}.csv"`);
+      `attachment; filename="attendance_${classRows[0].unit_code}_${date}.csv"`);
     res.send([header, ...csvRows].join("\n"));
   } catch (err) {
     console.error(err);

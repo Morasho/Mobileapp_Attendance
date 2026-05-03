@@ -22,7 +22,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "GPS Attendance needs your location to verify you are inside the classroom."
+          "locationWhenInUsePermission": "Allow GPS attendance to verify your location for class check-in."
         }
       ],
       [

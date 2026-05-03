@@ -1,34 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList, StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator, Alert,
+  FlatList, StyleSheet, Text,
+  TouchableOpacity, View, RefreshControl,
 } from "react-native";
 import api from "../services/api";
 
 export default function ReportScreen({ route }) {
   const { classId, className } = route.params ?? {};
 
-  const [report, setReport]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [date, setDate]       = useState(new Date().toISOString().split("T")[0]);
+  const [report, setReport]     = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [date, setDate]         = useState(new Date().toISOString().split("T")[0]);
 
-  useEffect(() => { fetchReport(); }, [date]);
-
-  const fetchReport = async () => {
-    setLoading(true);
+  const fetchReport = useCallback(async () => {
     try {
       const { data } = await api.get(`/attendance/report/${classId}?date=${date}`);
       setReport(data);
-    } catch (err) {
+    } catch {
       Alert.alert("Error", "Could not load report");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [classId, date]);
+
+  useEffect(() => { fetchReport(); }, [fetchReport]);
+
+  const onRefresh = () => { setRefreshing(true); fetchReport(); };
 
   const goToPreviousDay = () => {
     const d = new Date(date);
@@ -40,9 +40,8 @@ export default function ReportScreen({ route }) {
     const d = new Date(date);
     d.setDate(d.getDate() + 1);
     const today = new Date().toISOString().split("T")[0];
-    if (d.toISOString().split("T")[0] <= today) {
+    if (d.toISOString().split("T")[0] <= today)
       setDate(d.toISOString().split("T")[0]);
-    }
   };
 
   if (loading) {
@@ -60,8 +59,10 @@ export default function ReportScreen({ route }) {
       {/* Class header */}
       <View style={styles.classCard}>
         <Text style={styles.classLabel}>ATTENDANCE REPORT</Text>
-        <Text style={styles.className}>{report?.class?.name}</Text>
-        <Text style={styles.courseCode}>{report?.class?.courseCode} · {report?.class?.lecturer}</Text>
+        <Text style={styles.className}>{report?.class?.name ?? className}</Text>
+        <Text style={styles.courseCode}>
+          {report?.class?.courseCode} {report?.class?.lecturer ? `· ${report.class.lecturer}` : ""}
+        </Text>
       </View>
 
       {/* Date navigator */}
@@ -78,27 +79,29 @@ export default function ReportScreen({ route }) {
       {/* Summary cards */}
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: "#dbe4ff" }]}>
-          <Text style={styles.statNum}>{report?.summary?.totalPresent}</Text>
+          <Text style={styles.statNum}>{report?.summary?.totalPresent ?? 0}</Text>
           <Text style={styles.statLabel}>Present</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: "#ffe0e0" }]}>
-          <Text style={styles.statNum}>{report?.summary?.totalAbsent}</Text>
+          <Text style={styles.statNum}>{report?.summary?.totalAbsent ?? 0}</Text>
           <Text style={styles.statLabel}>Absent</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: "#d8f3dc" }]}>
-          <Text style={styles.statNum}>{report?.summary?.attendanceRate}%</Text>
+          <Text style={styles.statNum}>{report?.summary?.attendanceRate ?? 0}%</Text>
           <Text style={styles.statLabel}>Rate</Text>
         </View>
       </View>
 
-      {/* Student list */}
       <Text style={styles.sectionTitle}>
-        Present Students ({report?.summary?.totalPresent})
+        Present Students ({report?.summary?.totalPresent ?? 0})
       </Text>
 
       <FlatList
-        data={report?.records}
+        data={report?.records ?? []}
         keyExtractor={(_, i) => i.toString()}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4361ee" />
+        }
         renderItem={({ item, index }) => (
           <View style={styles.studentRow}>
             <View style={styles.indexCircle}>
@@ -119,10 +122,10 @@ export default function ReportScreen({ route }) {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No attendance records for this date.</Text>
+            <Text style={styles.emptyHint}>Pull down to refresh.</Text>
           </View>
         }
       />
-
     </View>
   );
 }
@@ -153,4 +156,5 @@ const styles = StyleSheet.create({
   distance:     { fontSize: 11, color: "#adb5bd", marginTop: 2 },
   empty:        { alignItems: "center", marginTop: 40 },
   emptyText:    { color: "#adb5bd", fontSize: 14 },
+  emptyHint:    { color: "#adb5bd", fontSize: 12, marginTop: 6 },
 });

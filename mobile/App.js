@@ -11,8 +11,14 @@ import AnalyticsScreen         from "./src/screens/AnalyticsScreen";
 import ReportScreen            from "./src/screens/ReportScreen";
 import LecturerDashboardScreen from "./src/screens/LecturerDashboardScreen";
 import ProfileScreen           from "./src/screens/ProfileScreen";
-import SessionManagerScreen       from "./src/screens/SessionManagerScreen";
-import ManageClassesScreen     from "./src/screens/ManageClassesScreen"; // match your filename exactly
+import SessionManagerScreen    from "./src/screens/SessionManagerScreen";
+import ManageClassesScreen     from "./src/screens/ManageClassesScreen";
+import AdminDashboardScreen    from "./src/screens/AdminDashboardScreen";
+import AdminCoursesScreen      from "./src/screens/AdminCoursesScreen";
+import AdminUnitsScreen        from "./src/screens/AdminUnitsScreen";
+import AdminLecturersScreen    from "./src/screens/AdminLecturersScreen";
+import AdminStudentsScreen     from "./src/screens/AdminStudentsScreen";
+import AdminPeriodsScreen from "./src/screens/AdminPeriodsScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -22,11 +28,10 @@ const screenOptions = {
   headerTitleStyle: { fontWeight: "700" },
 };
 
-// Pass setToken down so login/register can trigger stack switch
 function AuthStack({ setToken }) {
   return (
     <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen name="Login"    options={{ headerShown: false }}>
+      <Stack.Screen name="Login" options={{ headerShown: false }}>
         {(props) => <LoginScreen {...props} setToken={setToken} />}
       </Stack.Screen>
       <Stack.Screen name="Register" options={{ headerShown: false }}>
@@ -36,44 +41,61 @@ function AuthStack({ setToken }) {
   );
 }
 
-function AppStack({ setToken, userRole }) {
+function StudentStack({ setToken }) {
   return (
-    <Stack.Navigator
-      initialRouteName={userRole === "lecturer" ? "LecturerDashboard" : "ClassPicker"}
-      screenOptions={screenOptions}
-    >
-      <Stack.Screen name="LecturerDashboard" options={{ title: "Dashboard", headerShown: false }}>
-        {(props) => <LecturerDashboardScreen {...props} setToken={setToken} />}
-      </Stack.Screen>
-      <Stack.Screen name="ClassPicker" options={{ title: "Select Class", headerBackVisible: false }}>
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="ClassPicker" options={{ title: "My Classes", headerBackVisible: false }}>
         {(props) => <ClassPickerScreen {...props} setToken={setToken} />}
       </Stack.Screen>
-      <Stack.Screen name="Home" options={{ title: "Mark Attendance", headerBackVisible: false }}>
-        {(props) => <HomeScreen {...props} setToken={setToken} />}
-      </Stack.Screen>
-      <Stack.Screen name="Analytics" component={AnalyticsScreen}
-        options={{ title: "My Attendance" }} />
-      <Stack.Screen name="Report" component={ReportScreen}
-        options={{ title: "Class Report" }} />
-      <Stack.Screen name="ManageClasses" component={ManageClassesScreen}
-        options={{ title: "Manage Classes" }} />
+      <Stack.Screen name="Home" options={{ title: "Mark Attendance" }} component={HomeScreen} />
+      <Stack.Screen name="Analytics" component={AnalyticsScreen} options={{ title: "My Attendance" }} />
+      <Stack.Screen name="Report" component={ReportScreen} options={{ title: "Class Report" }} />
       <Stack.Screen name="Profile" options={{ title: "My Profile" }}>
         {(props) => <ProfileScreen {...props} setToken={setToken} />}
       </Stack.Screen>
-      <Stack.Screen name="SessionManager" component={SessionManagerScreen}
-        options={{ title: "Manage Sessions " }} />     
+    </Stack.Navigator>
+  );
+}
+
+function LecturerStack({ setToken }) {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="LecturerDashboard" options={{ headerShown: false }}>
+        {(props) => <LecturerDashboardScreen {...props} setToken={setToken} />}
+      </Stack.Screen>
+      <Stack.Screen name="SessionManager" component={SessionManagerScreen} options={{ title: "Manage Sessions" }} />
+      <Stack.Screen name="ManageClasses" component={ManageClassesScreen} options={{ title: "Manage Classes" }} />
+      <Stack.Screen name="Report" component={ReportScreen} options={{ title: "Class Report" }} />
+      <Stack.Screen name="Profile" options={{ title: "My Profile" }}>
+        {(props) => <ProfileScreen {...props} setToken={setToken} />}
+      </Stack.Screen>
+    </Stack.Navigator>
+  );
+}
+
+function AdminStack({ setToken }) {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="AdminDashboard" options={{ headerShown: false }}>
+        {(props) => <AdminDashboardScreen {...props} setToken={setToken} />}
+      </Stack.Screen>
+      <Stack.Screen name="AdminPeriods" component={AdminPeriodsScreen} options={{ title: "Academic Periods" }} />
+      <Stack.Screen name="AdminCourses"   component={AdminCoursesScreen}   options={{ title: "Courses" }} />
+      <Stack.Screen name="AdminUnits"     component={AdminUnitsScreen}     options={{ title: "Units" }} />
+      <Stack.Screen name="AdminLecturers" component={AdminLecturersScreen} options={{ title: "Lecturers & Units" }} />
+      <Stack.Screen name="AdminStudents"  component={AdminStudentsScreen}  options={{ title: "Students" }} />
     </Stack.Navigator>
   );
 }
 
 export default function App() {
-  const [token, setToken]     = useState(null);
+  const [token, setToken]       = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [ready, setReady]     = useState(false);
+  const [ready, setReady]       = useState(false);
 
   useEffect(() => {
     const bootstrap = async () => {
-      const t = await SecureStore.getItemAsync("token");
+      const t   = await SecureStore.getItemAsync("token");
       const raw = await SecureStore.getItemAsync("user");
       if (t && raw) {
         const user = JSON.parse(raw);
@@ -85,21 +107,25 @@ export default function App() {
     bootstrap();
   }, []);
 
-  // Called by LoginScreen/RegisterScreen after successful auth
   const handleSetToken = async (token, user) => {
     await SecureStore.setItemAsync("token", token);
     await SecureStore.setItemAsync("user", JSON.stringify(user));
     setUserRole(user.role);
-    setToken(token);  // this triggers re-render → AppStack shown automatically
+    setToken(token);
   };
 
   if (!ready) return null;
 
+  const renderStack = () => {
+    if (!token) return <AuthStack setToken={handleSetToken} />;
+    if (userRole === "lecturer") return <LecturerStack setToken={setToken} />;
+    if (userRole === "admin")    return <AdminStack    setToken={setToken} />;
+    return <StudentStack setToken={setToken} />;
+  };
+
   return (
     <NavigationContainer>
-      {token
-        ? <AppStack setToken={setToken} userRole={userRole} />
-        : <AuthStack setToken={handleSetToken} />}
+      {renderStack()}
     </NavigationContainer>
   );
 }

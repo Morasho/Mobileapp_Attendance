@@ -1,11 +1,59 @@
 const pool = require("../config/db");
 
+// ── Helper: send Expo push notifications ───────────────────
+// Called after a session opens — alerts all eligible students
+const sendPushNotifications = async (unitId, title, body) => {
+  try {
+    // Get push tokens for all students enrolled in this unit's course + year
+    const { rows: unitRow } = await pool.query(
+      "SELECT course_id, year_of_study FROM units WHERE id = $1", [unitId]
+    );
+    if (!unitRow.length) return;
+
+    const { course_id, year_of_study } = unitRow[0];
+
+    const { rows: students } = await pool.query(
+      `SELECT expo_push_token FROM users
+       WHERE role = 'student'
+         AND course_id     = $1
+         AND year_of_study = $2
+         AND expo_push_token IS NOT NULL`,
+      [course_id, year_of_study]
+    );
+
+    if (!students.length) return;
+
+    const messages = students.map(s => ({
+      to:    s.expo_push_token,
+      sound: "default",
+      title,
+      body,
+      data:  { unitId },
+    }));
+
+    // Fire-and-forget — don't block the response
+    fetch("https://exp.host/--/api/v2/push/send", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(messages),
+    }).catch(err => console.error("Push notification error:", err.message));
+
+  } catch (err) {
+    console.error("sendPushNotifications error:", err.message);
+  }
+};
+
 // GET /api/lecturer/dashboard
 const dashboard = async (req, res) => {
   const lecturerId = req.user.id;
   try {
+    // Join units to get names — classes no longer has name/course_code directly
     const { rows: classes } = await pool.query(
-      "SELECT id, name, course_code FROM classes WHERE lecturer_id = $1",
+      `SELECT c.id, u.name AS unit_name, u.code AS unit_code,
+              u.year_of_study, u.semester
+       FROM classes c
+       JOIN units u ON c.unit_id = u.id
+       WHERE c.lecturer_id = $1`,
       [lecturerId]
     );
 
@@ -32,13 +80,20 @@ const dashboard = async (req, res) => {
 const myClasses = async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT c.id, c.name, c.course_code,
-              u.name AS lecturer,
-              c.classroom_lat, c.classroom_lng, c.created_at
+      `SELECT c.id,
+              u.name  AS unit_name,
+              u.code  AS unit_code,
+              u.year_of_study,
+              u.semester,
+              usr.name AS lecturer,
+              c.classroom_lat, c.classroom_lng, c.created_at,
+              COALESCE(s.is_active, FALSE) AS session_active
        FROM classes c
-       JOIN users u ON c.lecturer_id = u.id
+       JOIN units u   ON c.unit_id     = u.id
+       JOIN users usr ON c.lecturer_id = usr.id
+       LEFT JOIN sessions s ON s.class_id = c.id AND s.is_active = TRUE
        WHERE c.lecturer_id = $1
-       ORDER BY c.name ASC`,
+       ORDER BY u.year_of_study, u.semester, u.name ASC`,
       [req.user.id]
     );
     res.json({ classes: rows });
@@ -49,26 +104,52 @@ const myClasses = async (req, res) => {
 };
 
 // POST /api/lecturer/classes
+// Body: { unitId, classroomLat?, classroomLng? }
+// classroomLat/Lng are optional reference coords — the live GPS geofence
+// comes from the session open, not here.
 const createClass = async (req, res) => {
-  const { name, courseCode, classroomLat, classroomLng } = req.body;
+  const { unitId, classroomLat, classroomLng } = req.body;
   const lecturerId = req.user.id;
 
-  if (!name || !courseCode || classroomLat == null || classroomLng == null)
-    return res.status(400).json({ error: "name, courseCode, classroomLat and classroomLng are required" });
+  if (!unitId)
+    return res.status(400).json({ error: "unitId is required" });
 
   try {
-    // fixed: query users not lecturers
-    const { rows: uRows } = await pool.query(
-      "SELECT name FROM users WHERE id = $1", [lecturerId]
+    // Verify this lecturer is assigned to the unit
+    const { rows: assigned } = await pool.query(
+      `SELECT 1 FROM lecturer_units
+       WHERE lecturer_id = $1 AND unit_id = $2`,
+      [lecturerId, unitId]
     );
-    const lecturerName = uRows[0]?.name || null;
+    if (!assigned.length)
+      return res.status(403).json({ error: "You are not assigned to this unit" });
+
+    // Prevent duplicate class (one class per lecturer per unit)
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM classes WHERE unit_id = $1 AND lecturer_id = $2`,
+      [unitId, lecturerId]
+    );
+    if (existing.length)
+      return res.status(409).json({ error: "You already have a class for this unit" });
 
     const { rows } = await pool.query(
-      `INSERT INTO classes (name, course_code, lecturer, classroom_lat, classroom_lng, lecturer_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [name, courseCode, lecturerName, classroomLat, classroomLng, lecturerId]
+      `INSERT INTO classes (unit_id, lecturer_id, classroom_lat, classroom_lng)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [unitId, lecturerId, classroomLat || null, classroomLng || null]
     );
-    res.status(201).json({ message: "Class created", class: rows[0] });
+
+    // Return with unit details for the mobile app
+    const { rows: full } = await pool.query(
+      `SELECT c.id, u.name AS unit_name, u.code AS unit_code,
+              u.year_of_study, u.semester, co.name AS course_name
+       FROM classes c
+       JOIN units   u  ON c.unit_id  = u.id
+       JOIN courses co ON u.course_id = co.id
+       WHERE c.id = $1`,
+      [rows[0].id]
+    );
+
+    res.status(201).json({ message: "Class created", class: full[0] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not create class" });
@@ -76,9 +157,10 @@ const createClass = async (req, res) => {
 };
 
 // PUT /api/lecturer/classes/:id
+// Only classroom_lat/lng are updatable — unit is fixed once class is created
 const updateClass = async (req, res) => {
   const { id } = req.params;
-  const { name, courseCode, classroomLat, classroomLng } = req.body;
+  const { classroomLat, classroomLng } = req.body;
 
   try {
     const { rows: check } = await pool.query(
@@ -90,12 +172,10 @@ const updateClass = async (req, res) => {
 
     const { rows } = await pool.query(
       `UPDATE classes SET
-         name          = COALESCE($1, name),
-         course_code   = COALESCE($2, course_code),
-         classroom_lat = COALESCE($3, classroom_lat),
-         classroom_lng = COALESCE($4, classroom_lng)
-       WHERE id = $5 RETURNING *`,
-      [name, courseCode, classroomLat, classroomLng, id]
+         classroom_lat = COALESCE($1, classroom_lat),
+         classroom_lng = COALESCE($2, classroom_lng)
+       WHERE id = $3 RETURNING *`,
+      [classroomLat, classroomLng, id]
     );
     res.json({ message: "Class updated", class: rows[0] });
   } catch (err) {
@@ -123,14 +203,44 @@ const deleteClass = async (req, res) => {
   }
 };
 
+// GET /api/lecturer/units
+const myUnits = async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.name, u.code, u.year_of_study, u.semester,
+              c.name AS course_name, c.code AS course_code,
+              -- flag whether lecturer already created a class for this unit
+              EXISTS (
+                SELECT 1 FROM classes cl
+                WHERE cl.unit_id = u.id AND cl.lecturer_id = $1
+              ) AS class_exists
+       FROM lecturer_units lu
+       JOIN units   u ON lu.unit_id  = u.id
+       JOIN courses c ON u.course_id = c.id
+       WHERE lu.lecturer_id = $1
+       ORDER BY c.name, u.year_of_study, u.semester, u.name`,
+      [req.user.id]
+    );
+    res.json({ units: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not fetch units" });
+  }
+};
+
 // GET /api/lecturer/report/:classId?date=YYYY-MM-DD
 const classReport = async (req, res) => {
   const { classId } = req.params;
   const date = req.query.date || new Date().toISOString().split("T")[0];
 
   try {
+    // Join units to get name/code from new schema
     const { rows: classRows } = await pool.query(
-      "SELECT * FROM classes WHERE id = $1 AND lecturer_id = $2",
+      `SELECT c.id, c.lecturer_id,
+              u.name AS unit_name, u.code AS unit_code
+       FROM classes c
+       JOIN units u ON c.unit_id = u.id
+       WHERE c.id = $1 AND c.lecturer_id = $2`,
       [classId, req.user.id]
     );
     if (!classRows.length)
@@ -156,12 +266,12 @@ const classReport = async (req, res) => {
     const totalPresent  = present.length;
 
     res.json({
-      class: { id: classId, name: cls.name, courseCode: cls.course_code },
+      class: { id: classId, name: cls.unit_name, courseCode: cls.unit_code },
       date,
       summary: {
         totalEnrolled,
         totalPresent,
-        totalAbsent: Math.max(0, totalEnrolled - totalPresent),
+        totalAbsent:    Math.max(0, totalEnrolled - totalPresent),
         attendanceRate: totalEnrolled > 0
           ? Math.round((totalPresent / totalEnrolled) * 100) : 0,
       },
@@ -173,4 +283,8 @@ const classReport = async (req, res) => {
   }
 };
 
-module.exports = { dashboard, myClasses, createClass, updateClass, deleteClass, classReport };
+module.exports = {
+  dashboard, myUnits, myClasses,
+  createClass, updateClass, deleteClass,
+  classReport, sendPushNotifications,
+};
