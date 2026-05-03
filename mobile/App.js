@@ -19,6 +19,7 @@ import AdminUnitsScreen        from "./src/screens/AdminUnitsScreen";
 import AdminLecturersScreen    from "./src/screens/AdminLecturersScreen";
 import AdminStudentsScreen     from "./src/screens/AdminStudentsScreen";
 import AdminPeriodsScreen from "./src/screens/AdminPeriodsScreen";
+import AdminSemesterReportScreen from "./src/screens/AdminSemesterReportScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -80,6 +81,7 @@ function AdminStack({ setToken }) {
         {(props) => <AdminDashboardScreen {...props} setToken={setToken} />}
       </Stack.Screen>
       <Stack.Screen name="AdminPeriods" component={AdminPeriodsScreen} options={{ title: "Academic Periods" }} />
+      <Stack.Screen name="AdminSemesterReport" component={AdminSemesterReportScreen} options={{ title: "Semester Report" }} />
       <Stack.Screen name="AdminCourses"   component={AdminCoursesScreen}   options={{ title: "Courses" }} />
       <Stack.Screen name="AdminUnits"     component={AdminUnitsScreen}     options={{ title: "Units" }} />
       <Stack.Screen name="AdminLecturers" component={AdminLecturersScreen} options={{ title: "Lecturers & Units" }} />

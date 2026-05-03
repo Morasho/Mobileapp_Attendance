@@ -28,9 +28,8 @@ const signIn = async (req, res) => {
       [studentId]
     );
     const student = studentRows[0];
-    if (student.course_id !== cls.course_id || student.year_of_study !== cls.year_of_study) {
+    if (student.course_id !== cls.course_id || student.year_of_study !== cls.year_of_study)
       return res.status(403).json({ error: "This class is not part of your course or year" });
-    }
 
     // 3. Check active session
     const { rows: sessionRows } = await pool.query(
@@ -49,7 +48,7 @@ const signIn = async (req, res) => {
     // 4. Geofence check using SESSION GPS (lecturer's live location at open time)
     const { allowed, distanceM } = isWithinGeofence(
       latitude, longitude,
-      session.opened_lat, session.opened_lng  // session GPS, not classroom GPS
+      session.opened_lat, session.opened_lng
     );
     if (!allowed) {
       return res.status(403).json({
@@ -103,6 +102,80 @@ const myLogs = async (req, res) => {
   }
 };
 
+// GET /api/attendance/my-summary
+// Per-unit attendance stats for the student scoped to active period
+const mySummary = async (req, res) => {
+  const studentId = req.user.id;
+  try {
+    // Get active period
+    const { rows: periodRows } = await pool.query(
+      "SELECT * FROM academic_periods WHERE is_active = TRUE LIMIT 1"
+    );
+    const period = periodRows[0] || null;
+
+    // Per-unit: total sessions held + student attended
+    const params = period
+      ? [studentId, req.user.course_id, period.id, req.user.year_of_study]
+      : [studentId, req.user.course_id, req.user.year_of_study];
+
+    const periodFilter = period ? "AND s.period_id = $3" : "";
+    const yearParam    = period ? "$4" : "$3";
+
+    const { rows: units } = await pool.query(
+      `SELECT
+         u.id          AS unit_id,
+         u.name        AS unit_name,
+         u.code        AS unit_code,
+         u.semester,
+         COUNT(DISTINCT s.id) AS total_sessions,
+         COUNT(DISTINCT al.session_id) FILTER (WHERE al.student_id = $1) AS attended
+       FROM classes c
+       JOIN units u ON c.unit_id = u.id
+       LEFT JOIN sessions s
+         ON s.class_id = c.id AND s.is_active = FALSE ${periodFilter}
+       LEFT JOIN attendance_logs al
+         ON al.session_id = s.id AND al.student_id = $1
+       WHERE u.course_id     = $2
+         AND u.year_of_study = ${yearParam}
+       GROUP BY u.id, u.name, u.code, u.semester
+       ORDER BY u.semester, u.name`,
+      params
+    );
+
+    const summary = units.map(u => ({
+      unit_id:        u.unit_id,
+      unit_name:      u.unit_name,
+      unit_code:      u.unit_code,
+      semester:       u.semester,
+      total_sessions: parseInt(u.total_sessions),
+      attended:       parseInt(u.attended),
+      rate:           parseInt(u.total_sessions) > 0
+        ? Math.round((parseInt(u.attended) / parseInt(u.total_sessions)) * 100)
+        : null,
+    }));
+
+    // Recent logs (last 10) with next class date
+    const { rows: recentLogs } = await pool.query(
+      `SELECT al.id, al.signed_at, al.signed_date, al.distance_m, al.status,
+              u.name AS class_name, u.code AS unit_code,
+              s.next_class_date
+       FROM attendance_logs al
+       JOIN classes c  ON al.class_id   = c.id
+       JOIN units u    ON c.unit_id     = u.id
+       JOIN sessions s ON al.session_id = s.id
+       WHERE al.student_id = $1
+       ORDER BY al.signed_at DESC
+       LIMIT 10`,
+      [studentId]
+    );
+
+    res.json({ period: period || null, summary, recentLogs });
+  } catch (err) {
+    console.error("MY-SUMMARY ERROR:", err.message);
+    res.status(500).json({ error: "Could not fetch summary" });
+  }
+};
+
 // GET /api/attendance/report/:classId?date=YYYY-MM-DD
 const classReport = async (req, res) => {
   const { classId } = req.params;
@@ -113,7 +186,7 @@ const classReport = async (req, res) => {
       `SELECT c.*, u.name AS unit_name, u.code AS unit_code, c.lecturer_id,
               usr.name AS lecturer_name
        FROM classes c
-       JOIN units u  ON c.unit_id     = u.id
+       JOIN units u   ON c.unit_id     = u.id
        JOIN users usr ON c.lecturer_id = usr.id
        WHERE c.id = $1`,
       [classId]
@@ -140,20 +213,21 @@ const classReport = async (req, res) => {
       [classId, date]
     );
 
-    const totalEnrolled  = parseInt(enrolledRows[0].total);
-    const totalPresent   = presentRows.length;
+    const totalEnrolled = parseInt(enrolledRows[0].total);
+    const totalPresent  = presentRows.length;
 
     res.json({
       class: {
-        id: classId,
-        name: cls.unit_name,
+        id:         classId,
+        name:       cls.unit_name,
         courseCode: cls.unit_code,
-        lecturer: cls.lecturer_name,
+        lecturer:   cls.lecturer_name,
       },
       date,
       summary: {
-        totalEnrolled, totalPresent,
-        totalAbsent: Math.max(0, totalEnrolled - totalPresent),
+        totalEnrolled,
+        totalPresent,
+        totalAbsent:    Math.max(0, totalEnrolled - totalPresent),
         attendanceRate: totalEnrolled > 0
           ? Math.round((totalPresent / totalEnrolled) * 100) : 0,
       },
@@ -207,4 +281,4 @@ const classReportCSV = async (req, res) => {
   }
 };
 
-module.exports = { signIn, myLogs, classReport, classReportCSV };
+module.exports = { signIn, myLogs, mySummary, classReport, classReportCSV };

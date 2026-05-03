@@ -16,6 +16,7 @@ export default function HomeScreen({ route, navigation, setToken }) {
   const [locError, setLocError]       = useState(null);
   const [loading, setLoading]         = useState(false);
   const [status, setStatus]           = useState(null);
+  const [sessionInfo, setSessionInfo] = useState(null); // full session object
   const [sessionOpen, setSessionOpen] = useState(null);
   const [showCamera, setShowCamera]   = useState(false);
   const [selfie, setSelfie]           = useState(null);
@@ -23,6 +24,7 @@ export default function HomeScreen({ route, navigation, setToken }) {
   const [refreshing, setRefreshing]   = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
+  const intervalRef = useRef(null);
 
   const loadStudent = async () => {
     const raw = await SecureStore.getItemAsync("user");
@@ -46,61 +48,50 @@ export default function HomeScreen({ route, navigation, setToken }) {
     }
   };
 
-// useRef to hold the interval ID so we can clear it on unmount or class change
-const intervalRef = useRef(null);
+  useEffect(() => {
+    loadStudent();
+    requestLocation();
+  }, []);
 
-useEffect(() => {
-  loadStudent();
-  requestLocation();
-}, []);
-
-useEffect(() => {
-  // Clear any existing interval
-  if (intervalRef.current) clearInterval(intervalRef.current);
-
-  if (!classId) {
-    setSessionOpen(false);
-    return;
-  }
-
-  // Check immediately then every 10 seconds
-  const check = async () => {
-    try {
-      const { data } = await api.get(`/sessions/active/${classId}`);
-      setSessionOpen(data.active);
-      setLastChecked(new Date());
-    } catch {
-      setSessionOpen(false);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  check();
-  intervalRef.current = setInterval(check, 10000);
-
-  // Cleanup on unmount or classId change
-  return () => {
+  useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-  };
-}, [classId]); // depends only on classId, not checkSession
+    if (!classId) { setSessionOpen(false); return; }
 
-// Update onRefresh and checkSession button to use the same logic
-const onRefresh = () => {
-  setRefreshing(true);
-  api.get(`/sessions/active/${classId}`)
-    .then(({ data }) => { setSessionOpen(data.active); setLastChecked(new Date()); })
-    .catch(() => setSessionOpen(false))
-    .finally(() => setRefreshing(false));
-};
+    const check = async () => {
+      try {
+        const { data } = await api.get(`/sessions/active/${classId}`);
+        setSessionOpen(data.active);
+        setSessionInfo(data.session || null);
+        setLastChecked(new Date());
+      } catch {
+        setSessionOpen(false);
+        setSessionInfo(null);
+      } finally {
+        setRefreshing(false);
+      }
+    };
+
+    check();
+    intervalRef.current = setInterval(check, 10000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [classId]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    api.get(`/sessions/active/${classId}`)
+      .then(({ data }) => {
+        setSessionOpen(data.active);
+        setSessionInfo(data.session || null);
+        setLastChecked(new Date());
+      })
+      .catch(() => { setSessionOpen(false); setSessionInfo(null); })
+      .finally(() => setRefreshing(false));
+  };
 
   const openCamera = async () => {
     if (!cameraPermission?.granted) {
       const result = await requestCameraPermission();
-      if (!result.granted) {
-        Alert.alert("Camera needed", "Please allow camera access.");
-        return;
-      }
+      if (!result.granted) { Alert.alert("Camera needed", "Please allow camera access."); return; }
     }
     setSelfie(null);
     setShowCamera(true);
@@ -133,9 +124,15 @@ const onRefresh = () => {
         latitude:  location.latitude,
         longitude: location.longitude,
       });
+
+      const nextMsg = sessionInfo?.next_class_date
+        ? `\n📅 Next class: ${sessionInfo.next_class_date}`
+        : "";
+
       setStatus({
-        type: "success",
-        message: `Attendance recorded ✅\nYou were ${data.distanceM}m from the classroom.`,
+        type:    "success",
+        message: `Attendance recorded ✅\nYou were ${data.distanceM}m from the classroom.${nextMsg}`,
+        nextClassDate: sessionInfo?.next_class_date || null,
       });
       setSelfie(null);
     } catch (err) {
@@ -199,13 +196,13 @@ const onRefresh = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Session status — auto-refreshes every 10s */}
+      {/* Session status */}
       {classId && (
         <View style={[
           styles.sessionCard,
-          sessionOpen === null ? styles.sessionChecking :
-          sessionOpen         ? styles.sessionOpenCard :
-                                styles.sessionClosedCard
+          sessionOpen === null  ? styles.sessionChecking   :
+          sessionOpen           ? styles.sessionOpenCard   :
+                                  styles.sessionClosedCard
         ]}>
           {sessionOpen === null ? (
             <View style={styles.row}>
@@ -215,6 +212,14 @@ const onRefresh = () => {
           ) : sessionOpen ? (
             <>
               <Text style={styles.sessionText}>🟢 Attendance is open — sign in now!</Text>
+              {sessionInfo?.is_makeup && (
+                <Text style={styles.makeupTag}>📌 Make-up class</Text>
+              )}
+              {sessionInfo?.next_class_date && (
+                <Text style={styles.nextClassTag}>
+                  📅 Next class: {sessionInfo.next_class_date}
+                </Text>
+              )}
               {lastChecked && (
                 <Text style={styles.sessionMeta}>
                   Checked {lastChecked.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -306,11 +311,19 @@ const onRefresh = () => {
       {status && (
         <View style={[styles.statusBox, status.type === "success" ? styles.successBox : styles.errorBox]}>
           <Text style={styles.statusText}>{status.message}</Text>
+          {status.type === "success" && (
+            <TouchableOpacity
+              style={styles.viewAnalyticsBtn}
+              onPress={() => navigation.navigate("Analytics")}
+            >
+              <Text style={styles.viewAnalyticsText}>View my attendance →</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
       <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate("Analytics")}>
-        <Text style={styles.secondaryText}>📊 View My Attendance History</Text>
+        <Text style={styles.secondaryText}>📊 View My Attendance</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -331,6 +344,8 @@ const styles = StyleSheet.create({
   sessionOpenCard:   { backgroundColor: "#d8f3dc" },
   sessionClosedCard: { backgroundColor: "#ffe0e0" },
   sessionText:       { fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
+  makeupTag:         { fontSize: 12, color: "#856404", marginTop: 4 },
+  nextClassTag:      { fontSize: 12, color: "#2d6a4f", marginTop: 4, fontWeight: "600" },
   sessionMeta:       { fontSize: 11, color: "#6c757d", marginTop: 4 },
   sessionHint:       { fontSize: 12, color: "#6c757d", marginTop: 4 },
   recheckBtn:        { alignSelf: "flex-start", marginTop: 8, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: "#dee2e6" },
@@ -357,6 +372,8 @@ const styles = StyleSheet.create({
   successBox:        { backgroundColor: "#d8f3dc" },
   errorBox:          { backgroundColor: "#ffe0e0" },
   statusText:        { fontSize: 14, color: "#1a1a2e", lineHeight: 22 },
+  viewAnalyticsBtn:  { marginTop: 10, alignSelf: "flex-start" },
+  viewAnalyticsText: { color: "#2d6a4f", fontWeight: "700", fontSize: 13 },
   secondaryBtn:      { borderRadius: 12, padding: 16, alignItems: "center", borderWidth: 1, borderColor: "#4361ee" },
   secondaryText:     { color: "#4361ee", fontWeight: "600", fontSize: 15 },
   cameraContainer:   { flex: 1, backgroundColor: "#000" },

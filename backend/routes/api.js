@@ -4,7 +4,7 @@ const pool     = require("../config/db");
 
 const { register, login }                                     = require("../controllers/authController");
 const { listClasses }                                         = require("../controllers/classController");
-const { signIn, myLogs, classReport, classReportCSV }         = require("../controllers/attendanceController");
+const { signIn, myLogs, mySummary, classReport, classReportCSV }         = require("../controllers/attendanceController");
 const { dashboard, myUnits, myClasses, createClass, updateClass,
         deleteClass, classReport: lecturerReport }            = require("../controllers/lecturerController");
 const { getProfile, updateProfile }                           = require("../controllers/profileController");
@@ -16,7 +16,8 @@ const {
   getLecturers, assignUnit, unassignUnit, getStudents,
 }                                                             = require("../controllers/adminController");
 const {
-  getPeriods, createPeriod, activatePeriod, deletePeriod, periodReport,
+  getPeriods, createPeriod, activatePeriod, deletePeriod,
+  periodReport, periodReportCSV, periodSummary,
   getSchedule, setSchedule, deleteSchedule, getNextClassDate,
 }                                                             = require("../controllers/academicController");
 const { protect, requireRole }                                = require("../middleware/auth");
@@ -61,6 +62,7 @@ router.post("/attendance/sign-in",             protect, requireRole("student"), 
 router.get ("/attendance/my-logs",             protect, requireRole("student"),            myLogs);
 router.get ("/attendance/report/:classId",     protect, requireRole("student","lecturer"), classReport);
 router.get ("/attendance/report/:classId/csv", protect, requireRole("lecturer"),           classReportCSV);
+router.get("/attendance/my-summary",           protect, requireRole("student"),            mySummary);
 
 // ── Admin routes ───────────────────────────────────────────
 router.get   ("/admin/courses",          protect, requireRole("admin"), getCourses);
@@ -84,6 +86,8 @@ router.post  ("/admin/periods",              protect, requireRole("admin"), crea
 router.put   ("/admin/periods/:id/activate", protect, requireRole("admin"), activatePeriod);
 router.delete("/admin/periods/:id",          protect, requireRole("admin"), deletePeriod);
 router.get   ("/admin/periods/:id/report",   protect, requireRole("admin"), periodReport);
+router.get("/admin/periods/:id/report/csv", protect, requireRole("admin"), periodReportCSV);
+router.get("/admin/periods/:id/summary",    protect, requireRole("admin"), periodSummary);
 
 // Active period — accessible by all logged-in users
 router.get("/periods/active", protect, async (req, res) => {

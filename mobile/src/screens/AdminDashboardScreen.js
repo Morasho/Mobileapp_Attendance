@@ -53,6 +53,7 @@ export default function AdminDashboardScreen({ navigation, setToken }) {
     { icon: "👨‍🏫", title: "Lecturers", sub: `${stats.lecturers} lecturer(s) registered`, screen: "AdminLecturers" },
     { icon: "🎓", title: "Students",  sub: `${stats.students} student(s) registered`,  screen: "AdminStudents"  },
     { icon: "📅", title: "Academic Periods", sub: "Manage semesters", screen: "AdminPeriods" },
+    { icon: "📊", title: "Semester Report", sub: "Attendance by period", screen: "AdminSemesterReport" },
   ];
 
   return (

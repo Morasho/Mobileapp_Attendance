@@ -7,16 +7,39 @@ import { Picker } from "@react-native-picker/picker";
 import * as Location from "expo-location";
 import api from "../services/api";
 
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const TIME_OPTIONS = [];
+for (let h = 6; h <= 20; h++) {
+  ["00", "30"].forEach(m => {
+    const label = `${h.toString().padStart(2, "0")}:${m}`;
+    TIME_OPTIONS.push(label);
+  });
+}
+
 export default function ManageClassesScreen() {
   const [classes, setClasses]       = useState([]);
   const [units, setUnits]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [modal, setModal]           = useState(false);
+
+  // Create class modal
+  const [createModal, setCreateModal] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState("");
-  const [saving, setSaving]         = useState(false);
-  const [gpsLoading, setGpsLoading] = useState(false);
-  const [gpsCoords, setGpsCoords]   = useState(null);
+  const [saving, setSaving]           = useState(false);
+  const [gpsLoading, setGpsLoading]   = useState(false);
+  const [gpsCoords, setGpsCoords]     = useState(null);
+
+  // Schedule modal
+  const [scheduleModal, setScheduleModal]   = useState(false);
+  const [scheduleClass, setScheduleClass]   = useState(null);
+  const [schedule, setSchedule]             = useState([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [newDay, setNewDay]                 = useState("1");
+  const [newStart, setNewStart]             = useState("08:00");
+  const [newEnd, setNewEnd]                 = useState("10:00");
+  const [addingSlot, setAddingSlot]         = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -37,28 +60,19 @@ export default function ManageClassesScreen() {
   useEffect(() => { load(); }, []);
   const onRefresh = () => { setRefreshing(true); load(); };
 
-  // Units that don't have a class yet
   const availableUnits = units.filter(u => !u.class_exists);
 
-  const openCreate = () => {
-    setSelectedUnit("");
-    setGpsCoords(null);
-    setModal(true);
-  };
-
+  // ── Create class ───────────────────────────────────────────
   const captureGPS = async () => {
     setGpsLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Location access is needed to set classroom venue");
+        Alert.alert("Permission denied", "Location access is needed");
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setGpsCoords({
-        lat: loc.coords.latitude,
-        lng: loc.coords.longitude,
-      });
+      setGpsCoords({ lat: loc.coords.latitude, lng: loc.coords.longitude });
     } catch {
       Alert.alert("Error", "Could not get GPS location");
     } finally {
@@ -68,8 +82,7 @@ export default function ManageClassesScreen() {
 
   const handleCreate = async () => {
     if (!selectedUnit)
-      return Alert.alert("Missing unit", "Please select a unit for this class");
-
+      return Alert.alert("Missing unit", "Please select a unit");
     setSaving(true);
     try {
       await api.post("/lecturer/classes", {
@@ -77,7 +90,7 @@ export default function ManageClassesScreen() {
         classroomLat: gpsCoords?.lat || null,
         classroomLng: gpsCoords?.lng || null,
       });
-      setModal(false);
+      setCreateModal(false);
       load();
     } catch (err) {
       Alert.alert("Error", err.response?.data?.error || "Could not create class");
@@ -107,7 +120,74 @@ export default function ManageClassesScreen() {
     );
   };
 
-  // Group existing classes by course → year
+  // ── Schedule ───────────────────────────────────────────────
+  const openSchedule = async (cls) => {
+    setScheduleClass(cls);
+    setScheduleModal(true);
+    setScheduleLoading(true);
+    try {
+      const { data } = await api.get(`/lecturer/classes/${cls.id}/schedule`);
+      setSchedule(data.schedule || []);
+    } catch {
+      Alert.alert("Error", "Could not load schedule");
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleAddSlot = async () => {
+    if (!newDay && newDay !== "0")
+      return Alert.alert("Missing", "Please select a day");
+    if (newStart >= newEnd)
+      return Alert.alert("Invalid time", "End time must be after start time");
+
+    // Check for duplicate day
+    if (schedule.find(s => String(s.day_of_week) === String(newDay))) {
+      return Alert.alert(
+        "Duplicate day",
+        `You already have a slot on ${DAY_NAMES[newDay]}. Delete it first to change the time.`
+      );
+    }
+
+    setAddingSlot(true);
+    try {
+      const { data } = await api.post(`/lecturer/classes/${scheduleClass.id}/schedule`, {
+        dayOfWeek: parseInt(newDay),
+        startTime: newStart,
+        endTime:   newEnd,
+      });
+      setSchedule(prev => [...prev, data.schedule].sort((a, b) => a.day_of_week - b.day_of_week));
+    } catch (err) {
+      Alert.alert("Error", err.response?.data?.error || "Could not add slot");
+    } finally {
+      setAddingSlot(false);
+    }
+  };
+
+  const handleDeleteSlot = (slot) => {
+    Alert.alert(
+      "Remove slot",
+      `Remove ${DAY_NAMES[slot.day_of_week]} ${slot.start_time}–${slot.end_time}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove", style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete(
+                `/lecturer/classes/${scheduleClass.id}/schedule/${slot.id}`
+              );
+              setSchedule(prev => prev.filter(s => s.id !== slot.id));
+            } catch {
+              Alert.alert("Error", "Could not remove slot");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // ── Grouping ───────────────────────────────────────────────
   const grouped = {};
   classes.forEach(cls => {
     const courseKey = cls.course_name || "My Classes";
@@ -117,7 +197,6 @@ export default function ManageClassesScreen() {
     grouped[courseKey][yearKey].push(cls);
   });
 
-  // Group available units the same way for the picker label
   const unitLabel = (u) =>
     `${u.name} (${u.code}) — ${u.course_name}, Yr ${u.year_of_study} Sem ${u.semester}`;
 
@@ -125,42 +204,34 @@ export default function ManageClassesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Add button — only show if there are unassigned units */}
       {availableUnits.length > 0 ? (
-        <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
+        <TouchableOpacity style={styles.addBtn} onPress={() => {
+          setSelectedUnit(""); setGpsCoords(null); setCreateModal(true);
+        }}>
           <Text style={styles.addBtnText}>＋  Create New Class</Text>
         </TouchableOpacity>
       ) : (
         <View style={styles.allDoneBanner}>
-          <Text style={styles.allDoneText}>
-            ✅ You have created classes for all your assigned units
-          </Text>
+          <Text style={styles.allDoneText}>✅ Classes created for all assigned units</Text>
         </View>
       )}
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4361ee" />}
-      >
+      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4361ee" />}>
         {classes.length === 0 && (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No classes yet.</Text>
-            <Text style={styles.emptyHint}>
-              Tap "Create New Class" to set up a class for one of your assigned units.
-            </Text>
+            <Text style={styles.emptyHint}>Tap "Create New Class" to get started.</Text>
           </View>
         )}
 
-        {/* Grouped by course → year */}
         {Object.entries(grouped).map(([courseName, years]) => (
           <View key={courseName}>
             <View style={styles.courseHeader}>
               <Text style={styles.courseName}>📖 {courseName}</Text>
             </View>
-
             {Object.entries(years).map(([yearLabel, clsList]) => (
               <View key={yearLabel}>
                 <Text style={styles.yearLabel}>{yearLabel}</Text>
-
                 {clsList.map(cls => (
                   <View key={cls.id} style={styles.card}>
                     <View style={styles.cardTop}>
@@ -179,12 +250,21 @@ export default function ManageClassesScreen() {
                         )}
                       </View>
                     </View>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => handleDelete(cls)}
-                    >
-                      <Text style={styles.deleteBtnText}>🗑 Delete Class</Text>
-                    </TouchableOpacity>
+
+                    <View style={styles.cardActions}>
+                      <TouchableOpacity
+                        style={styles.scheduleBtn}
+                        onPress={() => openSchedule(cls)}
+                      >
+                        <Text style={styles.scheduleBtnText}>🗓 Set Schedule</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => handleDelete(cls)}
+                      >
+                        <Text style={styles.deleteBtnText}>🗑 Delete</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ))}
               </View>
@@ -192,7 +272,6 @@ export default function ManageClassesScreen() {
           </View>
         ))}
 
-        {/* Unassigned units section */}
         {availableUnits.length > 0 && (
           <View style={styles.unassignedSection}>
             <Text style={styles.unassignedTitle}>Units without a class yet</Text>
@@ -209,11 +288,7 @@ export default function ManageClassesScreen() {
                 </View>
                 <TouchableOpacity
                   style={styles.quickCreateBtn}
-                  onPress={() => {
-                    setSelectedUnit(u.id);
-                    setGpsCoords(null);
-                    setModal(true);
-                  }}
+                  onPress={() => { setSelectedUnit(u.id); setGpsCoords(null); setCreateModal(true); }}
                 >
                   <Text style={styles.quickCreateText}>＋ Create</Text>
                 </TouchableOpacity>
@@ -223,25 +298,18 @@ export default function ManageClassesScreen() {
         )}
       </ScrollView>
 
-      {/* Create class modal */}
-      <Modal visible={modal} animationType="slide" presentationStyle="pageSheet">
+      {/* ── Create class modal ─────────────────────────────── */}
+      <Modal visible={createModal} animationType="slide" presentationStyle="pageSheet">
         <ScrollView contentContainerStyle={styles.modal}>
           <Text style={styles.modalTitle}>Create New Class</Text>
-          <Text style={styles.modalSub}>
-            Select one of your assigned units to create a class for it.
-          </Text>
+          <Text style={styles.modalSub}>Select a unit to create a class for it.</Text>
 
-          {/* Unit picker */}
           <Text style={styles.label}>Unit</Text>
           {availableUnits.length === 0 ? (
             <Text style={styles.noUnits}>All your units already have classes.</Text>
           ) : (
             <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={selectedUnit}
-                onValueChange={setSelectedUnit}
-                style={styles.picker}
-              >
+              <Picker selectedValue={selectedUnit} onValueChange={setSelectedUnit} style={styles.picker}>
                 <Picker.Item label="Select a unit..." value="" />
                 {availableUnits.map(u => (
                   <Picker.Item key={u.id} label={unitLabel(u)} value={u.id} />
@@ -250,19 +318,16 @@ export default function ManageClassesScreen() {
             </View>
           )}
 
-          {/* Optional reference GPS */}
           <Text style={styles.label}>Reference Venue (optional)</Text>
           <Text style={styles.venueHint}>
-            This is a fixed reference point. The live GPS geofence is always captured when you open attendance.
+            Fixed reference point. Live GPS geofence is captured when you open attendance.
           </Text>
-
           <TouchableOpacity style={styles.gpsBtn} onPress={captureGPS} disabled={gpsLoading}>
             {gpsLoading
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.gpsBtnText}>📡 Use My Current Location</Text>
             }
           </TouchableOpacity>
-
           {gpsCoords && (
             <View style={styles.coordPreview}>
               <Text style={styles.coordPreviewText}>
@@ -276,14 +341,104 @@ export default function ManageClassesScreen() {
             onPress={handleCreate}
             disabled={saving || !selectedUnit}
           >
-            {saving
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.saveBtnText}>Create Class</Text>
-            }
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Create Class</Text>}
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.cancelBtn} onPress={() => setModal(false)}>
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => setCreateModal(false)}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
+
+      {/* ── Schedule modal ─────────────────────────────────── */}
+      <Modal visible={scheduleModal} animationType="slide" presentationStyle="pageSheet">
+        <ScrollView contentContainerStyle={styles.modal}>
+          <Text style={styles.modalTitle}>
+            {scheduleClass?.unit_name} Schedule
+          </Text>
+          <Text style={styles.modalSub}>
+            Set the weekly recurring timetable for this class.
+          </Text>
+
+          {scheduleLoading ? (
+            <ActivityIndicator color="#4361ee" style={{ marginVertical: 20 }} />
+          ) : (
+            <>
+              {/* Existing slots */}
+              {schedule.length === 0 ? (
+                <View style={styles.noSchedule}>
+                  <Text style={styles.noScheduleText}>No schedule set yet.</Text>
+                  <Text style={styles.noScheduleHint}>Add slots below.</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.label}>Current schedule</Text>
+                  {schedule.map(slot => (
+                    <View key={slot.id} style={styles.slotRow}>
+                      <View style={styles.slotDayBadge}>
+                        <Text style={styles.slotDayText}>{DAY_SHORT[slot.day_of_week]}</Text>
+                      </View>
+                      <Text style={styles.slotTime}>
+                        {slot.start_time} – {slot.end_time}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.slotDeleteBtn}
+                        onPress={() => handleDeleteSlot(slot)}
+                      >
+                        <Text style={styles.slotDeleteText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {/* Add new slot */}
+              <View style={styles.divider} />
+              <Text style={styles.label}>Add a time slot</Text>
+
+              <Text style={styles.subLabel}>Day of week</Text>
+              <View style={styles.pickerWrap}>
+                <Picker selectedValue={newDay} onValueChange={setNewDay} style={styles.picker}>
+                  {DAY_NAMES.map((d, i) => (
+                    <Picker.Item key={i} label={d} value={String(i)} />
+                  ))}
+                </Picker>
+              </View>
+
+              <View style={styles.timeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.subLabel}>Start time</Text>
+                  <View style={styles.pickerWrap}>
+                    <Picker selectedValue={newStart} onValueChange={setNewStart} style={styles.picker}>
+                      {TIME_OPTIONS.map(t => (
+                        <Picker.Item key={t} label={t} value={t} />
+                      ))}
+                    </Picker>
+                  </View>
+                </View>
+                <View style={{ width: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.subLabel}>End time</Text>
+                  <View style={styles.pickerWrap}>
+                    <Picker selectedValue={newEnd} onValueChange={setNewEnd} style={styles.picker}>
+                      {TIME_OPTIONS.map(t => (
+                        <Picker.Item key={t} label={t} value={t} />
+                      ))}
+                    </Picker>
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity style={styles.addSlotBtn} onPress={handleAddSlot} disabled={addingSlot}>
+                {addingSlot
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.addSlotBtnText}>＋ Add Slot</Text>
+                }
+              </TouchableOpacity>
+            </>
+          )}
+
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => setScheduleModal(false)}>
+            <Text style={styles.cancelBtnText}>Done</Text>
           </TouchableOpacity>
         </ScrollView>
       </Modal>
@@ -301,14 +456,17 @@ const styles = StyleSheet.create({
   courseName:         { fontSize: 14, fontWeight: "700", color: "#3451b2" },
   yearLabel:          { fontSize: 12, fontWeight: "700", color: "#6c757d", marginBottom: 8, marginLeft: 4, textTransform: "uppercase", letterSpacing: 0.5 },
   card:               { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: "#dee2e6" },
-  cardTop:            { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 10 },
+  cardTop:            { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 12 },
   badge:              { backgroundColor: "#dbe4ff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   badgeText:          { color: "#3451b2", fontWeight: "700", fontSize: 12 },
   className:          { fontSize: 15, fontWeight: "600", color: "#1a1a2e" },
   meta:               { fontSize: 11, color: "#adb5bd", marginTop: 2 },
   coords:             { fontSize: 11, color: "#6c757d", marginTop: 4 },
   coordsMissing:      { fontSize: 11, color: "#adb5bd", marginTop: 4 },
-  deleteBtn:          { backgroundColor: "#ffe0e0", borderRadius: 8, padding: 10, alignItems: "center" },
+  cardActions:        { flexDirection: "row", gap: 8 },
+  scheduleBtn:        { flex: 1, backgroundColor: "#dbe4ff", borderRadius: 8, padding: 10, alignItems: "center" },
+  scheduleBtnText:    { color: "#3451b2", fontWeight: "700", fontSize: 13 },
+  deleteBtn:          { flex: 1, backgroundColor: "#ffe0e0", borderRadius: 8, padding: 10, alignItems: "center" },
   deleteBtnText:      { fontSize: 13, fontWeight: "600", color: "#c0392b" },
   unassignedSection:  { marginTop: 24 },
   unassignedTitle:    { fontSize: 13, fontWeight: "700", color: "#6c757d", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 },
@@ -321,10 +479,11 @@ const styles = StyleSheet.create({
   emptyText:          { fontSize: 16, color: "#adb5bd", fontWeight: "600" },
   emptyHint:          { fontSize: 13, color: "#adb5bd", marginTop: 6, textAlign: "center" },
   modal:              { padding: 28, paddingTop: 48 },
-  modalTitle:         { fontSize: 24, fontWeight: "700", color: "#1a1a2e", marginBottom: 8 },
+  modalTitle:         { fontSize: 22, fontWeight: "700", color: "#1a1a2e", marginBottom: 8 },
   modalSub:           { fontSize: 14, color: "#6c757d", marginBottom: 24 },
   label:              { fontSize: 13, fontWeight: "600", color: "#495057", marginBottom: 8 },
-  pickerWrap:         { backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#dee2e6", marginBottom: 20, overflow: "hidden" },
+  subLabel:           { fontSize: 12, color: "#6c757d", marginBottom: 6 },
+  pickerWrap:         { backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#dee2e6", marginBottom: 14, overflow: "hidden" },
   picker:             { height: 50, color: "#1a1a2e" },
   noUnits:            { fontSize: 14, color: "#adb5bd", marginBottom: 20 },
   venueHint:          { fontSize: 12, color: "#adb5bd", marginBottom: 12 },
@@ -335,6 +494,19 @@ const styles = StyleSheet.create({
   saveBtn:            { backgroundColor: "#4361ee", borderRadius: 10, padding: 16, alignItems: "center", marginBottom: 12 },
   saveBtnDisabled:    { backgroundColor: "#adb5bd" },
   saveBtnText:        { color: "#fff", fontWeight: "700", fontSize: 16 },
-  cancelBtn:          { borderRadius: 10, padding: 16, alignItems: "center", borderWidth: 1, borderColor: "#dee2e6" },
+  cancelBtn:          { borderRadius: 10, padding: 16, alignItems: "center", borderWidth: 1, borderColor: "#dee2e6", marginTop: 8 },
   cancelBtnText:      { color: "#6c757d", fontWeight: "600", fontSize: 15 },
+  noSchedule:         { alignItems: "center", paddingVertical: 20 },
+  noScheduleText:     { fontSize: 15, color: "#adb5bd", fontWeight: "600" },
+  noScheduleHint:     { fontSize: 13, color: "#adb5bd", marginTop: 4 },
+  slotRow:            { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#f8f9fa", borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#dee2e6" },
+  slotDayBadge:       { backgroundColor: "#4361ee", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minWidth: 44, alignItems: "center" },
+  slotDayText:        { color: "#fff", fontWeight: "700", fontSize: 12 },
+  slotTime:           { flex: 1, fontSize: 14, fontWeight: "600", color: "#1a1a2e" },
+  slotDeleteBtn:      { backgroundColor: "#ffe0e0", borderRadius: 6, width: 28, height: 28, justifyContent: "center", alignItems: "center" },
+  slotDeleteText:     { color: "#c0392b", fontWeight: "700", fontSize: 13 },
+  divider:            { height: 1, backgroundColor: "#dee2e6", marginVertical: 20 },
+  timeRow:            { flexDirection: "row" },
+  addSlotBtn:         { backgroundColor: "#2d6a4f", borderRadius: 10, padding: 14, alignItems: "center", marginBottom: 12 },
+  addSlotBtnText:     { color: "#fff", fontWeight: "700", fontSize: 14 },
 });

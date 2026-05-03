@@ -266,3 +266,156 @@ module.exports = {
   getPeriods, createPeriod, activatePeriod, deletePeriod, periodReport,
   getSchedule, setSchedule, deleteSchedule, getNextClassDate,
 };
+
+// ── Semester report (already in academicController) ─────────
+// GET /api/admin/periods/:id/report  — already implemented above
+// Adding CSV export endpoint below
+
+// GET /api/admin/periods/:id/report/csv
+const periodReportCSV = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows: periodRows } = await pool.query(
+      "SELECT * FROM academic_periods WHERE id = $1", [id]
+    );
+    if (!periodRows.length)
+      return res.status(404).json({ error: "Period not found" });
+    const period = periodRows[0];
+
+    // Full student-level attendance per unit per session
+    const { rows } = await pool.query(
+      `SELECT
+         u.name        AS unit_name,
+         u.code        AS unit_code,
+         usr_l.name    AS lecturer,
+         s.class_date,
+         s.is_makeup,
+         usr_s.name    AS student_name,
+         usr_s.student_id,
+         co.name       AS course_name,
+         usr_s.year_of_study,
+         al.signed_at,
+         al.distance_m,
+         al.status
+       FROM sessions s
+       JOIN classes c        ON s.class_id      = c.id
+       JOIN units u          ON c.unit_id        = u.id
+       JOIN courses co       ON u.course_id      = co.id
+       JOIN users usr_l      ON c.lecturer_id    = usr_l.id
+       JOIN attendance_logs al ON al.session_id  = s.id
+       JOIN users usr_s      ON al.student_id    = usr_s.id
+       WHERE s.period_id = $1
+       ORDER BY u.name, s.class_date, usr_s.name`,
+      [id]
+    );
+
+    const header = [
+      "Unit", "Code", "Lecturer", "Class Date", "Make-up",
+      "Student Name", "Student ID", "Course", "Year",
+      "Signed In At", "Distance (m)", "Status"
+    ].join(",");
+
+    const csvRows = rows.map(r => [
+      `"${r.unit_name}"`,
+      `"${r.unit_code}"`,
+      `"${r.lecturer}"`,
+      `"${r.class_date}"`,
+      r.is_makeup ? "Yes" : "No",
+      `"${r.student_name}"`,
+      `"${r.student_id}"`,
+      `"${r.course_name}"`,
+      r.year_of_study,
+      `"${new Date(r.signed_at).toLocaleString()}"`,
+      r.distance_m,
+      `"${r.status}"`,
+    ].join(","));
+
+    const filename = `attendance_${period.academic_year}_sem${period.semester}.csv`;
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send([header, ...csvRows].join("\n"));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not export CSV" });
+  }
+};
+
+// GET /api/admin/periods/:id/summary  — per-student attendance rate per unit
+const periodSummary = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows: periodRows } = await pool.query(
+      "SELECT * FROM academic_periods WHERE id = $1", [id]
+    );
+    if (!periodRows.length)
+      return res.status(404).json({ error: "Period not found" });
+
+    // Total sessions per class in this period
+    const { rows: sessionCounts } = await pool.query(
+      `SELECT c.id AS class_id, u.name AS unit_name, u.code AS unit_code,
+              co.name AS course_name, u.year_of_study, u.semester,
+              usr.name AS lecturer_name,
+              COUNT(s.id) AS total_sessions
+       FROM classes c
+       JOIN units u    ON c.unit_id     = u.id
+       JOIN courses co ON u.course_id   = co.id
+       JOIN users usr  ON c.lecturer_id = usr.id
+       LEFT JOIN sessions s ON s.class_id = c.id AND s.period_id = $1
+       GROUP BY c.id, u.name, u.code, co.name, u.year_of_study, u.semester, usr.name
+       HAVING COUNT(s.id) > 0
+       ORDER BY co.name, u.year_of_study, u.name`,
+      [id]
+    );
+
+    // Student attendance per class
+    const { rows: studentRows } = await pool.query(
+      `SELECT
+         c.id          AS class_id,
+         usr_s.id      AS student_id,
+         usr_s.name    AS student_name,
+         usr_s.student_id AS reg_number,
+         COUNT(al.id)  AS attended
+       FROM sessions s
+       JOIN classes c  ON s.class_id    = c.id
+       JOIN attendance_logs al ON al.session_id = s.id
+       JOIN users usr_s ON al.student_id = usr_s.id
+       WHERE s.period_id = $1
+       GROUP BY c.id, usr_s.id, usr_s.name, usr_s.student_id`,
+      [id]
+    );
+
+    // Merge — build per-class student summary
+    const classMap = {};
+    sessionCounts.forEach(cls => {
+      classMap[cls.class_id] = { ...cls, students: [] };
+    });
+    studentRows.forEach(row => {
+      if (classMap[row.class_id]) {
+        const total = classMap[row.class_id].total_sessions;
+        classMap[row.class_id].students.push({
+          student_id:   row.student_id,
+          student_name: row.student_name,
+          reg_number:   row.reg_number,
+          attended:     parseInt(row.attended),
+          total:        parseInt(total),
+          rate:         Math.round((row.attended / total) * 100),
+        });
+      }
+    });
+
+    res.json({
+      period:  periodRows[0],
+      classes: Object.values(classMap),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not generate summary" });
+  }
+};
+
+module.exports = {
+  getActivePeriod,
+  getPeriods, createPeriod, activatePeriod, deletePeriod,
+  periodReport, periodReportCSV, periodSummary,
+  getSchedule, setSchedule, deleteSchedule, getNextClassDate,
+};
